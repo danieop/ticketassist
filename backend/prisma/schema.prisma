@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  DEVELOPER
+  MENTOR
+  ADMIN
+}
+
+enum TicketSource {
+  EMAIL
+  SLACK
+  ZENDESK
+  JIRA
+  MANUAL
+}
+
+enum WorkflowStatus {
+  CREATED
+  TICKET_ANALYZED
+  PRIORITY_CLASSIFIED
+  REPO_SEARCHED
+  CODE_CONTEXT_READY
+  FIX_PROPOSED
+  MENTOR_DRAFT_READY
+  WAITING_FOR_REVIEW
+  REVIEWED
+  FAILED
+}
+
+enum AgentType {
+  TICKET_ANALYZER
+  PRIORITY_CLASSIFIER
+  REPO_SEARCH
+  CODE_CONTEXT
+  FIX_PROPOSAL
+  MENTOR_DRAFT
+}
+
+enum AgentRunStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum TraceLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+enum ReviewDecision {
+  APPROVED
+  REJECTED
+  NEED_MORE_INFORMATION
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  role          UserRole       @default(DEVELOPER)
+  tickets       Ticket[]
+  mentorReviews MentorReview[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Ticket {
+  id           String        @id @default(cuid())
+  title        String
+  description  String
+  reporterName String
+  source       TicketSource  @default(MANUAL)
+  reporterId   String?
+  reporter     User?         @relation(fields: [reporterId], references: [id])
+  workflowRuns WorkflowRun[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([reporterId])
+}
+
+model WorkflowRun {
+  id                String             @id @default(cuid())
+  ticketId          String
+  status            WorkflowStatus     @default(CREATED)
+  startedAt         DateTime           @default(now())
+  finishedAt        DateTime?
+  currentAgent      String?
+  ticket            Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  state             WorkflowState?
+  agentRuns         AgentRun[]
+  traceLogs         TraceLog[]
+  repoSearchResults RepoSearchResult[]
+  mentorReview      MentorReview?
+
+  @@index([ticketId])
+  @@index([status])
+}
+
+model WorkflowState {
+  id                     String      @id @default(cuid())
+  workflowRunId          String      @unique
+  inputTicket            Json
+  ticketAnalysis         Json?
+  priorityClassification Json?
+  repoSearchResults      Json?
+  codeContext            Json?
+  fixProposal            Json?
+  mentorDraft            Json?
+  reviewDecision         Json?
+  error                  Json?
+  workflowRun            WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  updatedAt              DateTime    @updatedAt
+}
+
+model Agent {
+  id             String     @id @default(cuid())
+  name           String
+  type           AgentType
+  description    String
+  executionOrder Int
+  agentRuns      AgentRun[]
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([type])
+  @@unique([executionOrder])
+}
+
+model AgentRun {
+  id             String         @id @default(cuid())
+  workflowRunId  String
+  agentId        String
+  status         AgentRunStatus @default(PENDING)
+  inputSnapshot  Json?
+  outputSnapshot Json?
+  errorMessage   String?
+  startedAt      DateTime       @default(now())
+  finishedAt     DateTime?
+  workflowRun    WorkflowRun    @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  agent          Agent          @relation(fields: [agentId], references: [id])
+  traceLogs      TraceLog[]
+
+  @@index([workflowRunId])
+  @@index([agentId])
+  @@index([status])
+}
+
+model TraceLog {
+  id            String      @id @default(cuid())
+  workflowRunId String
+  agentRunId    String?
+  level         TraceLevel  @default(INFO)
+  message       String
+  metadata      Json?
+  workflowRun   WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  agentRun      AgentRun?   @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+
+  @@index([workflowRunId])
+  @@index([agentRunId])
+  @@index([level])
+}
+
+model RepoSearchResult {
+  id             String      @id @default(cuid())
+  workflowRunId  String
+  filePath       String
+  chunkId        String
+  startLine      Int
+  endLine        Int
+  relevanceScore Float
+  reason         String
+  workflowRun    WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  @@index([workflowRunId])
+  @@index([filePath])
+}
+
+model MentorReview {
+  id            String         @id @default(cuid())
+  workflowRunId String         @unique
+  mentorId      String
+  decision      ReviewDecision
+  comment       String
+  workflowRun   WorkflowRun    @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  mentor        User           @relation(fields: [mentorId], references: [id])
+  reviewedAt    DateTime       @default(now())
+
+  @@index([mentorId])
+}

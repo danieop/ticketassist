@@ -1,23 +1,20 @@
-import { createServer } from "node:http";
+import { createApp } from "./app.js";
+import { env } from "./config/env.js";
+import { prisma } from "./config/prisma.js";
 
-const port = Number(process.env.PORT || 4000);
+const app = createApp();
 
-const server = createServer((request, response) => {
-  if (request.method === "GET" && request.url === "/health") {
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify({
-        ok: true,
-        service: "ticketassist-backend"
-      })
-    );
-    return;
-  }
-
-  response.writeHead(404, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ message: "Not found" }));
+const server = app.listen(env.PORT, () => {
+  console.log(`Backend listening on http://localhost:${env.PORT}`);
+  console.log(`Swagger docs available at http://localhost:${env.PORT}/docs`);
 });
 
-server.listen(port, () => {
-  console.log(`Backend listening on http://localhost:${port}`);
-});
+const shutdown = async () => {
+  await prisma.$disconnect();
+  server.close(() => {
+    process.exit(0);
+  });
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
