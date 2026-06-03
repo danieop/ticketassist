@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler } from "express";
+import multer from "multer";
 import { ZodError } from "zod";
 
 export class AppError extends Error {
@@ -16,6 +17,15 @@ export const errorHandler: ErrorRequestHandler = (error, _request, response, _ne
     response.status(400).json({
       message: "Validation failed",
       issues: error.issues
+    });
+    return;
+  }
+
+  if (error instanceof multer.MulterError) {
+    response.status(400).json({
+      message: "Upload failed",
+      code: error.code,
+      details: error.message
     });
     return;
   }
