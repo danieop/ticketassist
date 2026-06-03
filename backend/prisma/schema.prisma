@@ -62,6 +62,11 @@ enum ReviewDecision {
   NEED_MORE_INFORMATION
 }
 
+enum RepositoryUploadStatus {
+  READY
+  FAILED
+}
+
 model User {
   id            String         @id @default(cuid())
   name          String
@@ -69,6 +74,7 @@ model User {
   role          UserRole       @default(DEVELOPER)
   tickets       Ticket[]
   mentorReviews MentorReview[]
+  repositories  CodeRepository[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 }
@@ -91,11 +97,13 @@ model Ticket {
 model WorkflowRun {
   id                String             @id @default(cuid())
   ticketId          String
+  repositoryId      String?
   status            WorkflowStatus     @default(CREATED)
   startedAt         DateTime           @default(now())
   finishedAt        DateTime?
   currentAgent      String?
   ticket            Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  repository        CodeRepository?    @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
   state             WorkflowState?
   agentRuns         AgentRun[]
   traceLogs         TraceLog[]
@@ -103,7 +111,45 @@ model WorkflowRun {
   mentorReview      MentorReview?
 
   @@index([ticketId])
+  @@index([repositoryId])
   @@index([status])
+}
+
+model CodeRepository {
+  id             String                 @id @default(cuid())
+  name           String
+  description    String?
+  rootPath       String
+  status         RepositoryUploadStatus @default(READY)
+  fileCount      Int                    @default(0)
+  totalBytes     BigInt                 @default(0)
+  uploadedById   String?
+  uploadedBy     User?                  @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  files          CodeRepositoryFile[]
+  workflowRuns   WorkflowRun[]
+  errorMessage   String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@index([uploadedById])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CodeRepositoryFile {
+  id            String         @id @default(cuid())
+  repositoryId  String
+  relativePath  String
+  storagePath   String
+  sizeBytes     BigInt
+  checksumSha256 String
+  mimeType      String?
+  repository    CodeRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  createdAt     DateTime       @default(now())
+
+  @@unique([repositoryId, relativePath])
+  @@index([repositoryId])
+  @@index([relativePath])
 }
 
 model WorkflowState {

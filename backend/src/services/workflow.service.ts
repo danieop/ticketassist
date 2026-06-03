@@ -46,6 +46,7 @@ const defaultAgents = [
 
 const workflowInclude = {
   ticket: true,
+  repository: true,
   state: true,
   agentRuns: {
     include: {
@@ -172,6 +173,12 @@ function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) 
     finishedAt: workflow.finishedAt,
     currentAgent: workflow.currentAgent,
     ticket: workflow.ticket,
+    repository: workflow.repository
+      ? {
+          ...workflow.repository,
+          totalBytes: workflow.repository.totalBytes.toString()
+        }
+      : null,
     state: workflow.state,
     agents: workflow.agentRuns.map((agentRun) => ({
       id: agentRun.id,
@@ -214,6 +221,20 @@ export const workflowService = {
     const agents = await ensureDefaultAgents();
     const artifacts = buildDraftArtifacts(input.ticket);
 
+    if (input.repositoryId) {
+      const repository = await prisma.codeRepository.findUnique({
+        where: { id: input.repositoryId }
+      });
+
+      if (!repository) {
+        throw new AppError(404, "Repository not found");
+      }
+
+      if (repository.status !== "READY") {
+        throw new AppError(400, "Repository is not ready for workflow analysis");
+      }
+    }
+
     const workflow = await prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.create({
         data: {
@@ -228,6 +249,7 @@ export const workflowService = {
       const run = await tx.workflowRun.create({
         data: {
           ticketId: ticket.id,
+          repositoryId: input.repositoryId,
           status: "WAITING_FOR_REVIEW",
           currentAgent: "Human Review",
           finishedAt: new Date()
