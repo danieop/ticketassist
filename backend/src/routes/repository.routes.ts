@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { env } from "../config/env.js";
 import {
+  getRepositoryFileContent,
   getRepository,
   listRepositories,
   uploadRepository
@@ -30,6 +31,32 @@ const upload = multer({
  *         description: Uploaded repositories
  */
 repositoryRouter.get("/", listRepositories);
+
+/**
+ * @openapi
+ * /api/repositories/{id}/files/content:
+ *   get:
+ *     tags:
+ *       - Repositories
+ *     summary: Read an uploaded repository file
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: File content
+ *       404:
+ *         description: Repository file not found
+ */
+repositoryRouter.get("/:id/files/content", getRepositoryFileContent);
 
 /**
  * @openapi
