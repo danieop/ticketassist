@@ -6,7 +6,7 @@ const app = createApp();
 
 const server = app.listen(env.PORT, () => {
   console.log(`Backend listening on http://localhost:${env.PORT}`);
-  console.log(`Swagger docs available at http://localhost:${env.PORT}/docs`);
+  console.log(`Swagger docs available at http://localhost:${env.PORT}/swagger`);
 });
 
 const shutdown = async () => {

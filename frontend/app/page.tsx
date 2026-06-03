@@ -3,19 +3,25 @@ import { AnalysisBoard } from "@/components/analysis-board";
 import { MentorReview } from "@/components/mentor-review";
 import { MetricCard } from "@/components/metric-card";
 import { QueueSidebar } from "@/components/queue-sidebar";
+import { SessionRedirect } from "@/components/session-redirect";
 import { TicketOverview } from "@/components/ticket-overview";
 import { WorkflowTimeline } from "@/components/workflow-timeline";
 import { dummyWorkflow } from "@/lib/dummy-data";
+import Link from "next/link";
 
 export default function Home() {
   return (
     <main className="app-shell">
+      <SessionRedirect />
       <header className="topbar">
         <div>
           <p className="eyebrow">TicketAssist</p>
           <h1>Bug ticket analysis workspace</h1>
         </div>
-        <button className="secondary-action" type="button">New workflow</button>
+        <div className="topbar-actions">
+          <Link className="secondary-action" href="/login">Login</Link>
+          <Link className="primary-action" href="/register">Register</Link>
+        </div>
       </header>
 
       <section className="metrics-row" aria-label="Workflow metrics">
