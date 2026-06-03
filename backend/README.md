@@ -40,8 +40,24 @@ npm run dev -w backend
 - `GET /health`
 - `GET /docs`
 - `GET /api/agents`
+- `GET /api/repositories`
+- `GET /api/repositories/:id`
+- `POST /api/repositories/upload`
 - `POST /api/workflows`
 - `GET /api/workflows/:id`
 - `POST /api/workflows/:id/review`
+
+`POST /api/repositories/upload` accepts `multipart/form-data` with `name`, optional
+`description`, optional `uploadedById`, and `files[]`. When uploading a folder from
+a browser, append each file using its relative folder path:
+
+```ts
+for (const file of input.files) {
+  formData.append("files", file, file.webkitRelativePath || file.name);
+}
+```
+
+Files are written under `NETWORK_FILE_STORAGE/repositories/{repositoryId}` and
+metadata is stored with Prisma in `CodeRepository` and `CodeRepositoryFile`.
 
 The workflow service currently creates deterministic dummy analysis artifacts and persists them through Prisma. It does not run AI agents yet.

@@ -20,6 +20,10 @@ export const swaggerSpec = swaggerJSDoc({
           type: "object",
           required: ["ticket"],
           properties: {
+            repositoryId: {
+              type: "string",
+              description: "Optional uploaded repository id to associate with the workflow"
+            },
             ticket: {
               type: "object",
               required: ["title", "description"],
@@ -54,6 +58,32 @@ export const swaggerSpec = swaggerJSDoc({
               example: "Please confirm affected release version before implementation."
             },
             mentorId: { type: "string" }
+          }
+        },
+        UploadRepositoryRequest: {
+          type: "object",
+          required: ["name", "files"],
+          properties: {
+            name: {
+              type: "string",
+              example: "checkout-service"
+            },
+            description: {
+              type: "string",
+              example: "Repository snapshot for checkout bug triage."
+            },
+            uploadedById: {
+              type: "string"
+            },
+            files: {
+              type: "array",
+              items: {
+                type: "string",
+                format: "binary"
+              },
+              description:
+                "Repository files. Preserve folder paths by sending each multipart filename as its relative path."
+            }
           }
         }
       }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const createWorkflowSchema = z.object({
+  repositoryId: z.string().trim().min(1).optional(),
   ticket: z.object({
     title: z.string().trim().min(3),
     description: z.string().trim().min(10),
