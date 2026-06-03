@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CodeRepository, CodeRepositoryFile } from "@prisma/client";
+import SftpClient from "ssh2-sftp-client";
 import { env } from "../config/env.js";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
@@ -45,11 +46,50 @@ function getStorageRoot() {
     return configured.replace(/\//g, "\\");
   }
 
+  const ipShareWithColon = /^((?:\d{1,3}\.){3}\d{1,3}):[\\/](.+)$/.exec(configured);
+
+  if (ipShareWithColon) {
+    return `\\\\${ipShareWithColon[1]}\\${ipShareWithColon[2].replace(/[\\/]+/g, "\\")}`;
+  }
+
   if (/^(?:\d{1,3}\.){3}\d{1,3}[\\/]/.test(configured)) {
     return `\\\\${configured.replace(/[\\/]+/g, "\\")}`;
   }
 
   return path.resolve(configured);
+}
+
+function getSftpConfig() {
+  if (!env.SFTP_HOST || !env.SFTP_USERNAME || !env.SFTP_PASSWORD) {
+    throw new AppError(500, "SFTP storage is not configured");
+  }
+
+  return {
+    host: env.SFTP_HOST,
+    port: env.SFTP_PORT,
+    username: env.SFTP_USERNAME,
+    password: env.SFTP_PASSWORD,
+    readyTimeout: 20000
+  };
+}
+
+function getRemoteStorageRoot() {
+  const configured = stripQuotes(env.NETWORK_FILE_STORAGE).replace(/\\/g, "/");
+  const normalized = path.posix.normalize(configured);
+
+  if (!normalized.startsWith("/") || normalized.includes("\0")) {
+    throw new AppError(500, "NETWORK_FILE_STORAGE must be an absolute remote path for SFTP storage");
+  }
+
+  return normalized;
+}
+
+function getRepositoryRoot(repositoryId: string) {
+  if (env.STORAGE_DRIVER === "sftp") {
+    return path.posix.join(getRemoteStorageRoot(), "repositories", repositoryId);
+  }
+
+  return path.join(getStorageRoot(), "repositories", repositoryId);
 }
 
 function normalizeRelativePath(originalName: string) {
@@ -76,6 +116,18 @@ function checksumSha256(buffer: Buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+function isLikelyBinary(buffer: Buffer) {
+  const sampleSize = Math.min(buffer.length, 8000);
+
+  for (let index = 0; index < sampleSize; index += 1) {
+    if (buffer[index] === 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function toRepositoryResponse(
   repository: CodeRepository & {
     files?: CodeRepositoryFile[];
@@ -93,6 +145,10 @@ function toRepositoryResponse(
 }
 
 async function writeUploadedFiles(repositoryRoot: string, files: UploadedFile[]) {
+  if (env.STORAGE_DRIVER === "sftp") {
+    return writeUploadedFilesToSftp(repositoryRoot, files);
+  }
+
   const seenPaths = new Set<string>();
   const root = path.resolve(repositoryRoot);
 
@@ -128,6 +184,67 @@ async function writeUploadedFiles(repositoryRoot: string, files: UploadedFile[])
   }
 
   return metadata;
+}
+
+async function writeUploadedFilesToSftp(repositoryRoot: string, files: UploadedFile[]) {
+  const seenPaths = new Set<string>();
+  const root = path.posix.normalize(repositoryRoot);
+  const sftp = new SftpClient("ticketassist-repository-upload");
+
+  await sftp.connect(getSftpConfig());
+
+  try {
+    await sftp.mkdir(root, true);
+
+    const metadata = [];
+
+    for (const file of files) {
+      const relativePath = normalizeRelativePath(file.originalname);
+
+      if (seenPaths.has(relativePath)) {
+        throw new AppError(400, `Duplicate repository file path: ${relativePath}`);
+      }
+
+      seenPaths.add(relativePath);
+
+      const storagePath = path.posix.normalize(path.posix.join(root, ...relativePath.split("/")));
+
+      if (storagePath !== root && !storagePath.startsWith(`${root}/`)) {
+        throw new AppError(400, `Unsafe repository path: ${relativePath}`);
+      }
+
+      await sftp.mkdir(path.posix.dirname(storagePath), true);
+      await sftp.put(file.buffer, storagePath);
+
+      metadata.push({
+        relativePath,
+        storagePath,
+        sizeBytes: BigInt(file.size),
+        checksumSha256: checksumSha256(file.buffer),
+        mimeType: file.mimetype || null
+      });
+    }
+
+    return metadata;
+  } finally {
+    await sftp.end();
+  }
+}
+
+async function readStoredFile(storagePath: string) {
+  if (env.STORAGE_DRIVER !== "sftp") {
+    return readFile(storagePath);
+  }
+
+  const sftp = new SftpClient("ticketassist-repository-read");
+  await sftp.connect(getSftpConfig());
+
+  try {
+    const content = await sftp.get(storagePath);
+    return Buffer.isBuffer(content) ? content : Buffer.from(content);
+  } finally {
+    await sftp.end();
+  }
 }
 
 async function findRepositoryOrThrow(id: string) {
@@ -166,7 +283,7 @@ export const repositoryService = {
       }
     });
 
-    const repositoryRoot = path.join(getStorageRoot(), "repositories", repository.id);
+    const repositoryRoot = getRepositoryRoot(repository.id);
 
     try {
       const fileMetadata = await writeUploadedFiles(repositoryRoot, files);
@@ -190,16 +307,25 @@ export const repositoryService = {
         })
       ]);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Repository upload failed";
+
       await prisma.codeRepository.update({
         where: { id: repository.id },
         data: {
           rootPath: repositoryRoot,
           status: "FAILED",
-          errorMessage: error instanceof Error ? error.message : "Repository upload failed"
+          errorMessage
         }
       });
 
-      throw error;
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError(500, "Repository upload failed", {
+        storagePath: repositoryRoot,
+        error: errorMessage
+      });
     }
 
     return toRepositoryResponse(await findRepositoryOrThrow(repository.id));
@@ -218,5 +344,41 @@ export const repositoryService = {
 
   async getById(id: string) {
     return toRepositoryResponse(await findRepositoryOrThrow(id));
+  },
+
+  async getFileContent(id: string, relativePath: string) {
+    const normalizedPath = normalizeRelativePath(relativePath);
+    const file = await prisma.codeRepositoryFile.findUnique({
+      where: {
+        repositoryId_relativePath: {
+          repositoryId: id,
+          relativePath: normalizedPath
+        }
+      },
+      include: {
+        repository: true
+      }
+    });
+
+    if (!file) {
+      throw new AppError(404, "Repository file not found");
+    }
+
+    if (file.repository.status !== "READY") {
+      throw new AppError(400, "Repository is not ready");
+    }
+
+    const buffer = await readStoredFile(file.storagePath);
+    const binary = isLikelyBinary(buffer);
+
+    return {
+      repositoryId: id,
+      relativePath: file.relativePath,
+      sizeBytes: file.sizeBytes.toString(),
+      checksumSha256: file.checksumSha256,
+      mimeType: file.mimeType,
+      encoding: binary ? "base64" : "utf8",
+      content: binary ? buffer.toString("base64") : buffer.toString("utf8")
+    };
   }
 };

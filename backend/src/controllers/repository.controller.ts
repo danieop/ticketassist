@@ -48,3 +48,17 @@ export const getRepository: RequestHandler = async (request, response, next) => 
     next(error);
   }
 };
+
+export const getRepositoryFileContent: RequestHandler = async (request, response, next) => {
+  try {
+    if (typeof request.query.path !== "string") {
+      throw new AppError(400, "File path is required");
+    }
+
+    response.json(
+      await repositoryService.getFileContent(getParamId(request.params.id), request.query.path)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
