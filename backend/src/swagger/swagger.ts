@@ -122,6 +122,41 @@ export const swaggerSpec = swaggerJSDoc({
             }
           }
         },
+        CreateTicketRequest: {
+          type: "object",
+          required: ["title", "description"],
+          properties: {
+            title: { type: "string", example: "Checkout saved card fails" },
+            description: {
+              type: "string",
+              example: "Customer cannot pay with a saved card in production."
+            },
+            reporterName: { type: "string", example: "Acme Retail" },
+            source: {
+              type: "string",
+              enum: ["EMAIL", "SLACK", "ZENDESK", "JIRA", "MANUAL"],
+              example: "ZENDESK"
+            },
+            reporterId: { type: "string" }
+          }
+        },
+        UpdateTicketRequest: {
+          type: "object",
+          properties: {
+            title: { type: "string", example: "Checkout saved card fails after retry" },
+            description: {
+              type: "string",
+              example: "Customer cannot pay with a saved card after retrying in production."
+            },
+            reporterName: { type: "string", example: "Acme Retail" },
+            source: {
+              type: "string",
+              enum: ["EMAIL", "SLACK", "ZENDESK", "JIRA", "MANUAL"],
+              example: "ZENDESK"
+            },
+            reporterId: { type: "string", nullable: true }
+          }
+        },
         ReviewWorkflowRequest: {
           type: "object",
           required: ["decision", "comment"],
