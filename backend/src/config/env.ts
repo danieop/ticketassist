@@ -12,7 +12,12 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  STORAGE_DRIVER: z.enum(["local", "sftp"]).default("local"),
   NETWORK_FILE_STORAGE: z.string().trim().min(1, "NETWORK_FILE_STORAGE is required"),
+  SFTP_HOST: z.string().trim().optional(),
+  SFTP_PORT: z.coerce.number().int().positive().default(22),
+  SFTP_USERNAME: z.string().trim().optional(),
+  SFTP_PASSWORD: z.string().optional(),
   REPOSITORY_UPLOAD_MAX_FILES: z.coerce.number().int().positive().default(2000),
   REPOSITORY_UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(25),
   CLIENT_ORIGIN: z.string().trim().min(1).default("http://localhost:3000"),
@@ -21,6 +26,20 @@ const envSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: z.string().trim().min(1).default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().trim().min(1).default("30d"),
   GOOGLE_CLIENT_ID: z.string().trim().optional()
+}).superRefine((value, context) => {
+  if (value.STORAGE_DRIVER !== "sftp") {
+    return;
+  }
+
+  for (const key of ["SFTP_HOST", "SFTP_USERNAME", "SFTP_PASSWORD"] as const) {
+    if (!value[key]) {
+      context.addIssue({
+        code: "custom",
+        path: [key],
+        message: `${key} is required when STORAGE_DRIVER=sftp`
+      });
+    }
+  }
 });
 
 export const env = envSchema.parse(process.env);

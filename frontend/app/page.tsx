@@ -19,6 +19,7 @@ export default function Home() {
           <h1>Bug ticket analysis workspace</h1>
         </div>
         <div className="topbar-actions">
+          <Link className="secondary-action" href="/codebase">Codebase</Link>
           <Link className="secondary-action" href="/login">Login</Link>
           <Link className="primary-action" href="/register">Register</Link>
         </div>
