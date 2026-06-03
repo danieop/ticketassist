@@ -16,6 +16,84 @@ export const swaggerSpec = swaggerJSDoc({
     ],
     components: {
       schemas: {
+        RegisterRequest: {
+          type: "object",
+          required: ["name", "email", "password"],
+          properties: {
+            name: { type: "string", example: "Nguyen Van A" },
+            email: { type: "string", format: "email", example: "developer@example.com" },
+            password: { type: "string", minLength: 8, example: "Password123" },
+            role: {
+              type: "string",
+              enum: ["DEVELOPER", "MENTOR", "ADMIN"],
+              example: "DEVELOPER"
+            }
+          }
+        },
+        LoginRequest: {
+          type: "object",
+          required: ["email", "password"],
+          properties: {
+            email: { type: "string", format: "email", example: "developer@example.com" },
+            password: { type: "string", example: "Password123" }
+          }
+        },
+        GoogleAuthRequest: {
+          type: "object",
+          required: ["idToken"],
+          properties: {
+            idToken: { type: "string", description: "Google Identity Services ID token" },
+            role: {
+              type: "string",
+              enum: ["DEVELOPER", "MENTOR", "ADMIN"],
+              example: "DEVELOPER"
+            }
+          }
+        },
+        RefreshTokenRequest: {
+          type: "object",
+          required: ["refreshToken"],
+          properties: {
+            refreshToken: { type: "string" }
+          }
+        },
+        LogoutRequest: {
+          type: "object",
+          properties: {
+            refreshToken: { type: "string" }
+          }
+        },
+        CreateUserRequest: {
+          type: "object",
+          required: ["name", "email"],
+          properties: {
+            name: { type: "string", example: "Nguyen Van A" },
+            email: { type: "string", format: "email", example: "developer@example.com" },
+            password: { type: "string", minLength: 8, example: "Password123" },
+            googleId: { type: "string" },
+            avatarUrl: { type: "string", format: "uri" },
+            role: {
+              type: "string",
+              enum: ["DEVELOPER", "MENTOR", "ADMIN"],
+              example: "DEVELOPER"
+            }
+          }
+        },
+        UpdateUserRequest: {
+          type: "object",
+          properties: {
+            name: { type: "string", example: "Nguyen Van B" },
+            email: { type: "string", format: "email", example: "mentor@example.com" },
+            password: { type: "string", minLength: 8, example: "Password123" },
+            googleId: { type: "string", nullable: true },
+            avatarUrl: { type: "string", format: "uri", nullable: true },
+            role: {
+              type: "string",
+              enum: ["DEVELOPER", "MENTOR", "ADMIN"],
+              example: "MENTOR"
+            }
+          }
+        },
         CreateWorkflowRequest: {
           type: "object",
           required: ["ticket"],
