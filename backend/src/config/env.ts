@@ -20,6 +20,11 @@ const envSchema = z.object({
   SFTP_PASSWORD: z.string().optional(),
   REPOSITORY_UPLOAD_MAX_FILES: z.coerce.number().int().positive().default(2000),
   REPOSITORY_UPLOAD_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(25),
+  DEFAULT_CODEBASE_PATH: z
+    .string()
+    .trim()
+    .min(1)
+    .default(path.resolve(configDir, "../../codebasetest/CardSeller-main/CardSeller")),
   CLIENT_ORIGIN: z.string().trim().min(1).default("http://localhost:3000"),
   JWT_SECRET: z.string().trim().min(16, "JWT_SECRET must be at least 16 characters"),
   JWT_EXPIRES_IN: z.string().trim().min(1).default("7d"),

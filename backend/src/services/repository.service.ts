@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CodeRepository, CodeRepositoryFile } from "@prisma/client";
@@ -10,6 +10,17 @@ import { AppError } from "../middlewares/error-handler.js";
 import type { UploadRepositoryInput } from "../validators/repository.validators.js";
 
 type UploadedFile = Express.Multer.File;
+
+const skippedLocalCodebaseDirectories = new Set([
+  ".git",
+  ".gradle",
+  ".idea",
+  ".next",
+  "build",
+  "dist",
+  "node_modules",
+  "target"
+]);
 
 const repositoryInclude = {
   files: {
@@ -114,6 +125,62 @@ function normalizeRelativePath(originalName: string) {
 
 function checksumSha256(buffer: Buffer) {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function collectLocalCodebaseFiles(root: string) {
+  const rootPath = path.resolve(root);
+  const rootStats = await stat(rootPath).catch(() => null);
+
+  if (!rootStats?.isDirectory()) {
+    throw new AppError(500, `Default codebase path is not a directory: ${rootPath}`);
+  }
+
+  const files: {
+    relativePath: string;
+    storagePath: string;
+    sizeBytes: bigint;
+    checksumSha256: string;
+    mimeType: string | null;
+  }[] = [];
+
+  async function walk(directory: string) {
+    const entries = await readdir(directory, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && skippedLocalCodebaseDirectories.has(entry.name)) {
+        continue;
+      }
+
+      const absolutePath = path.join(directory, entry.name);
+
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const buffer = await readFile(absolutePath);
+      const relativePath = path.relative(rootPath, absolutePath).replace(/\\/g, "/");
+
+      files.push({
+        relativePath,
+        storagePath: absolutePath,
+        sizeBytes: BigInt(buffer.length),
+        checksumSha256: checksumSha256(buffer),
+        mimeType: null
+      });
+    }
+  }
+
+  await walk(rootPath);
+
+  return {
+    rootPath,
+    files
+  };
 }
 
 function isLikelyBinary(buffer: Buffer) {
@@ -261,6 +328,56 @@ async function findRepositoryOrThrow(id: string) {
 }
 
 export const repositoryService = {
+  async ensureDefaultCodebaseRepository() {
+    const localCodebase = await collectLocalCodebaseFiles(env.DEFAULT_CODEBASE_PATH);
+    const repositoryName = path.basename(localCodebase.rootPath) || "Default codebase";
+    const totalBytes = localCodebase.files.reduce((sum, file) => sum + file.sizeBytes, 0n);
+    const existingRepository = await prisma.codeRepository.findFirst({
+      where: { rootPath: localCodebase.rootPath }
+    });
+
+    const repository =
+      existingRepository ??
+      (await prisma.codeRepository.create({
+        data: {
+          name: repositoryName,
+          description: "Local default codebase for ticket routing.",
+          rootPath: localCodebase.rootPath,
+          status: "READY"
+        }
+      }));
+
+    await prisma.$transaction([
+      prisma.codeRepositoryFile.deleteMany({
+        where: { repositoryId: repository.id }
+      }),
+      ...(localCodebase.files.length > 0
+        ? [
+            prisma.codeRepositoryFile.createMany({
+              data: localCodebase.files.map((file) => ({
+                repositoryId: repository.id,
+                ...file
+              }))
+            })
+          ]
+        : []),
+      prisma.codeRepository.update({
+        where: { id: repository.id },
+        data: {
+          name: repositoryName,
+          description: "Local default codebase for ticket routing.",
+          rootPath: localCodebase.rootPath,
+          status: "READY",
+          fileCount: localCodebase.files.length,
+          totalBytes,
+          errorMessage: null
+        }
+      })
+    ]);
+
+    return toRepositoryResponse(await findRepositoryOrThrow(repository.id));
+  },
+
   async upload(input: UploadRepositoryInput, files: UploadedFile[]) {
     if (files.length === 0) {
       throw new AppError(400, "At least one repository file is required");
@@ -332,6 +449,8 @@ export const repositoryService = {
   },
 
   async list() {
+    await this.ensureDefaultCodebaseRepository();
+
     const repositories = await prisma.codeRepository.findMany({
       orderBy: { createdAt: "desc" },
       include: {

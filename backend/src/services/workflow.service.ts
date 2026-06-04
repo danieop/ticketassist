@@ -1,5 +1,6 @@
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
+import { repositoryService } from "./repository.service.js";
 import type {
   CreateWorkflowInput,
   ReviewWorkflowInput
@@ -220,10 +221,12 @@ export const workflowService = {
   async create(input: CreateWorkflowInput) {
     const agents = await ensureDefaultAgents();
     const artifacts = buildDraftArtifacts(input.ticket);
+    const repositoryId =
+      input.repositoryId ?? (await repositoryService.ensureDefaultCodebaseRepository()).id;
 
-    if (input.repositoryId) {
+    if (repositoryId) {
       const repository = await prisma.codeRepository.findUnique({
-        where: { id: input.repositoryId }
+        where: { id: repositoryId }
       });
 
       if (!repository) {
@@ -249,7 +252,7 @@ export const workflowService = {
       const run = await tx.workflowRun.create({
         data: {
           ticketId: ticket.id,
-          repositoryId: input.repositoryId,
+          repositoryId,
           status: "WAITING_FOR_REVIEW",
           currentAgent: "Human Review",
           finishedAt: new Date()
