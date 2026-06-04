@@ -297,12 +297,13 @@ function deterministicCodeContext(state: TicketWorkflowState): CodeContext {
 
 async function buildCodeContextWithLlm(state: TicketWorkflowState): Promise<CodeContext> {
   const result = await callJsonChat({
-    model: env.AI_MODEL_ANALYZER,
+    model: env.AI_MODEL_CODE_CONTEXT,
+    timeoutMs: 60000,
     messages: [
       {
         role: "system",
         content:
-          "You are CodeContextAgent. Select the most relevant repository search results for mentor review. Do not propose a code fix. Return JSON only with keys: summary, relevantFiles, riskNotes, generatedAt."
+          "You are CodeContextAgent. Select the most relevant repository search results for mentor review. Do not propose a code fix. Return JSON only with keys: summary, relevantFiles, riskNotes, generatedAt. riskNotes and matchedTerms must always be arrays of strings, never a single string."
       },
       {
         role: "user",
@@ -382,12 +383,13 @@ function deterministicFixProposal(state: TicketWorkflowState): FixProposal {
 
 async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixProposal> {
   const result = await callJsonChat({
-    model: env.AI_MODEL_ANALYZER,
+    model: env.AI_MODEL_FIX_PROPOSAL,
+    timeoutMs: 60000,
     messages: [
       {
         role: "system",
         content:
-          "You are FixProposalAgent. Propose a constrained implementation approach for mentor review. Do not claim code was changed. Return JSON only with keys: title, hypotheses, recommendedApproach, steps, risks, verificationSteps, confidence."
+          "You are FixProposalAgent. Propose a constrained implementation approach for mentor review. Do not claim code was changed. Return JSON only with keys: title, hypotheses, recommendedApproach, steps, risks, verificationSteps, confidence. hypotheses, steps, risks, and verificationSteps must always be arrays of strings."
       },
       {
         role: "user",
@@ -442,12 +444,13 @@ function deterministicMentorDraft(state: TicketWorkflowState): MentorDraft {
 
 async function buildMentorDraftWithLlm(state: TicketWorkflowState): Promise<MentorDraft> {
   const result = await callJsonChat({
-    model: env.AI_MODEL_ANALYZER,
+    model: env.AI_MODEL_MENTOR_DRAFT,
+    timeoutMs: 60000,
     messages: [
       {
         role: "system",
         content:
-          "You are MentorDraftAgent. Draft a concise mentor-review note using workflow outputs. Do not say the code is fixed. Do not send a customer response. Return JSON only with keys: response, checklist, internalNotes, generatedAt."
+          "You are MentorDraftAgent. Draft a concise mentor-review note using workflow outputs. Do not say the code is fixed. Do not send a customer response. Return JSON only with keys: response, checklist, internalNotes, generatedAt. checklist and internalNotes must always be arrays of strings."
       },
       {
         role: "user",
@@ -716,7 +719,7 @@ async function codeContextNode(input: GraphInput): Promise<GraphInput> {
 
     try {
       codeContext = await buildCodeContextWithLlm(started);
-      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${codeContext.summary}`;
+      outputSummary = `LLM ${env.AI_MODEL_CODE_CONTEXT}: ${codeContext.summary}`;
     } catch (llmError) {
       codeContext = deterministicCodeContext(started);
       outputSummary = `LLM fallback used: ${
@@ -781,7 +784,7 @@ async function fixProposalNode(input: GraphInput): Promise<GraphInput> {
 
     try {
       fixProposal = await buildFixProposalWithLlm(started);
-      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${fixProposal.title}`;
+      outputSummary = `LLM ${env.AI_MODEL_FIX_PROPOSAL}: ${fixProposal.title}`;
     } catch (llmError) {
       fixProposal = deterministicFixProposal(started);
       outputSummary = `LLM fallback used: ${
@@ -846,7 +849,7 @@ async function mentorDraftNode(input: GraphInput): Promise<GraphInput> {
 
     try {
       mentorDraft = await buildMentorDraftWithLlm(started);
-      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${summarizeText(mentorDraft.response)}`;
+      outputSummary = `LLM ${env.AI_MODEL_MENTOR_DRAFT}: ${summarizeText(mentorDraft.response)}`;
     } catch (llmError) {
       mentorDraft = deterministicMentorDraft(started);
       outputSummary = `LLM fallback used: ${

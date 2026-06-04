@@ -4,7 +4,7 @@ async function main() {
   const workflow = await workflowService.create({
     retrievalStrategy: "hybrid",
     forceReindex: false,
-    maxResults: 10,
+    maxResults: 3,
     ticket: {
       title: "User cannot submit checkout form after entering coupon code",
       description:

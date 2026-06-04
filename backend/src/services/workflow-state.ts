@@ -68,38 +68,46 @@ export const repoSearchSchema = z.object({
   warnings: z.array(z.string()).optional()
 });
 
+const stringArraySchema = z.preprocess((value) => {
+  if (typeof value === "string") {
+    return [value];
+  }
+
+  return value;
+}, z.array(z.string()));
+
 export const codeContextFileSchema = z.object({
   filePath: z.string(),
   startLine: z.number().int().optional(),
   endLine: z.number().int().optional(),
   relevanceScore: z.number(),
   reason: z.string(),
-  matchedTerms: z.array(z.string()).optional(),
+  matchedTerms: stringArraySchema.optional(),
   excerpt: z.string().optional(),
-  riskNotes: z.array(z.string()).optional()
+  riskNotes: stringArraySchema.optional()
 });
 
 export const codeContextSchema = z.object({
   summary: z.string().min(1),
   relevantFiles: z.array(codeContextFileSchema),
-  riskNotes: z.array(z.string()),
+  riskNotes: stringArraySchema,
   generatedAt: z.string()
 });
 
 export const fixProposalSchema = z.object({
   title: z.string().min(1),
-  hypotheses: z.array(z.string()),
+  hypotheses: stringArraySchema,
   recommendedApproach: z.string().min(1),
-  steps: z.array(z.string()),
-  risks: z.array(z.string()),
-  verificationSteps: z.array(z.string()),
+  steps: stringArraySchema,
+  risks: stringArraySchema,
+  verificationSteps: stringArraySchema,
   confidence: z.number().min(0).max(1)
 });
 
 export const mentorDraftSchema = z.object({
   response: z.string().min(1),
-  checklist: z.array(z.string()),
-  internalNotes: z.array(z.string()).optional(),
+  checklist: stringArraySchema,
+  internalNotes: stringArraySchema.optional(),
   generatedAt: z.string()
 });
 

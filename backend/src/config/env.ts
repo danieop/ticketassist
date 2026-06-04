@@ -36,6 +36,9 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   AI_MODEL_ANALYZER: z.string().trim().default("gpt-4.1-mini"),
   AI_MODEL_PRIORITY: z.string().trim().default("gpt-4.1-mini"),
+  AI_MODEL_CODE_CONTEXT: z.string().trim().default("gpt-4.1-mini"),
+  AI_MODEL_FIX_PROPOSAL: z.string().trim().default("gpt-4.1-mini"),
+  AI_MODEL_MENTOR_DRAFT: z.string().trim().default("gpt-4.1-mini"),
   EMBEDDING_MODEL: z.string().trim().default("text-embedding-3-small"),
   REPO_INDEX_NAME: z.string().trim().default("default-repo-index"),
   PGVECTOR_CODE_CHUNKS_TABLE: z.string().trim().default("code_chunks")
