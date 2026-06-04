@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { env } from "../config/env.js";
 import {
+  buildRepositoryIndex,
   getRepositoryFileContent,
   getRepository,
   listRepositories,
@@ -57,6 +58,16 @@ repositoryRouter.get("/", listRepositories);
  *         description: Repository file not found
  */
 repositoryRouter.get("/:id/files/content", getRepositoryFileContent);
+
+/**
+ * @openapi
+ * /api/repositories/{id}/index:
+ *   post:
+ *     tags:
+ *       - Repositories
+ *     summary: Build or reuse a PostgreSQL pgvector code index
+ */
+repositoryRouter.post("/:id/index", buildRepositoryIndex);
 
 /**
  * @openapi

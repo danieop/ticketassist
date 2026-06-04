@@ -299,7 +299,9 @@ async function writeUploadedFilesToSftp(repositoryRoot: string, files: UploadedF
 }
 
 async function readStoredFile(storagePath: string) {
-  if (env.STORAGE_DRIVER !== "sftp") {
+  const isLocalWindowsPath = path.win32.isAbsolute(storagePath) || /^\\\\/.test(storagePath);
+
+  if (env.STORAGE_DRIVER !== "sftp" || isLocalWindowsPath) {
     return readFile(storagePath);
   }
 

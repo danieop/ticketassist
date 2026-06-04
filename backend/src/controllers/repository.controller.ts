@@ -1,7 +1,12 @@
 import type { RequestHandler } from "express";
 import { AppError } from "../middlewares/error-handler.js";
+import { env } from "../config/env.js";
+import { repoSearchService } from "../services/repo-search.service.js";
 import { repositoryService } from "../services/repository.service.js";
-import { uploadRepositorySchema } from "../validators/repository.validators.js";
+import {
+  buildRepositoryIndexSchema,
+  uploadRepositorySchema
+} from "../validators/repository.validators.js";
 
 function getParamId(value: string | string[] | undefined) {
   if (typeof value !== "string") {
@@ -58,6 +63,21 @@ export const getRepositoryFileContent: RequestHandler = async (request, response
     response.json(
       await repositoryService.getFileContent(getParamId(request.params.id), request.query.path)
     );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const buildRepositoryIndex: RequestHandler = async (request, response, next) => {
+  try {
+    const payload = buildRepositoryIndexSchema.parse(request.body);
+    const index = await repoSearchService.buildIndex({
+      repositoryId: getParamId(request.params.id),
+      indexName: payload.indexName ?? env.REPO_INDEX_NAME,
+      forceReindex: payload.forceReindex
+    });
+
+    response.json(index);
   } catch (error) {
     next(error);
   }

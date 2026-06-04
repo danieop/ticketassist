@@ -1,6 +1,11 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
+import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
 import { repositoryService } from "./repository.service.js";
+import { runTicketWorkflow } from "./workflow.graph.js";
+import type { TicketWorkflowState, WorkflowStatus } from "./workflow-state.js";
+import { nowIso } from "./workflow-state.js";
 import type {
   CreateWorkflowInput,
   ReviewWorkflowInput
@@ -75,6 +80,14 @@ const workflowInclude = {
   }
 } as const;
 
+const dbStatusByWorkflowStatus: Record<WorkflowStatus, "CREATED" | "TICKET_ANALYZED" | "PRIORITY_CLASSIFIED" | "REPO_SEARCHED" | "FAILED"> = {
+  created: "CREATED",
+  ticket_analyzed: "TICKET_ANALYZED",
+  priority_classified: "PRIORITY_CLASSIFIED",
+  repo_searched: "REPO_SEARCHED",
+  failed: "FAILED"
+};
+
 async function ensureDefaultAgents() {
   for (const agent of defaultAgents) {
     await prisma.agent.upsert({
@@ -89,87 +102,147 @@ async function ensureDefaultAgents() {
   });
 }
 
-function buildDraftArtifacts(ticket: CreateWorkflowInput["ticket"]) {
-  const shortTitle = ticket.title.toLowerCase();
-  const suspectedArea = shortTitle.includes("checkout")
-    ? "checkout/payment flow"
-    : shortTitle.includes("invoice")
-      ? "billing/export flow"
-      : "feature module related to the ticket symptoms";
+function toApiStatus(status: string) {
+  return status.toLowerCase();
+}
 
-  return {
-    ticketAnalysis: {
-      summary: `${ticket.title} needs focused analysis before any code change is proposed.`,
-      symptoms: [
-        "Customer-facing bug report has enough detail to start triage",
-        "Backend should preserve trace per sequential agent",
-        "Final output must wait for mentor review"
-      ],
-      missingInfo: ["Affected user or account IDs", "Release/version window", "Relevant logs or request IDs"]
-    },
-    priorityClassification: {
-      level: "P2",
-      reason: "Dummy classifier marks this as important until business impact is confirmed.",
-      impact: "Potential user workflow degradation; mentor should confirm severity."
-    },
-    repoSearchResults: [
-      {
-        filePath: "backend/src/modules/example.service.ts",
-        chunkId: "dummy-context-1",
-        startLine: 12,
-        endLine: 48,
-        relevanceScore: 0.91,
-        reason: `Likely service layer for ${suspectedArea}.`
-      },
-      {
-        filePath: "backend/src/modules/example.controller.ts",
-        chunkId: "dummy-context-2",
-        startLine: 4,
-        endLine: 38,
-        relevanceScore: 0.84,
-        reason: "Likely API entrypoint for reproducing the reported behavior."
+function toJsonValue(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (value === null || value === undefined) {
+    return Prisma.JsonNull;
+  }
+
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function getExecutedAgentTypes(state: TicketWorkflowState) {
+  return [...new Set(state.trace.map((entry) => entry.agent))];
+}
+
+function getAgentType(agentName: string) {
+  if (agentName === "TicketAnalyzerAgent") {
+    return "TICKET_ANALYZER";
+  }
+
+  if (agentName === "PriorityClassifierAgent") {
+    return "PRIORITY_CLASSIFIER";
+  }
+
+  return "REPO_SEARCH";
+}
+
+function getAgentOutputSnapshot(state: TicketWorkflowState, agentName: string) {
+  if (agentName === "TicketAnalyzerAgent") {
+    return state.analysis ?? null;
+  }
+
+  if (agentName === "PriorityClassifierAgent") {
+    return state.priority ?? null;
+  }
+
+  return state.repoSearch ?? null;
+}
+
+async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkflowState) {
+  const agents = await ensureDefaultAgents();
+  const agentTypes = getExecutedAgentTypes(state);
+
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.workflowRun.update({
+        where: { id: workflowRunId },
+        data: {
+          status: dbStatusByWorkflowStatus[state.status],
+          currentAgent: null,
+          finishedAt: new Date()
+        }
+      });
+
+      await tx.workflowState.update({
+        where: { workflowRunId },
+        data: {
+          inputTicket: toJsonValue(state.ticket),
+          ticketAnalysis: toJsonValue(state.analysis ?? null),
+          priorityClassification: toJsonValue(state.priority ?? null),
+          repoSearchResults: toJsonValue(state.repoSearch ?? null),
+          error: toJsonValue(state.errors.length > 0 ? state.errors : null)
+        }
+      });
+
+      await tx.repoSearchResult.deleteMany({
+        where: { workflowRunId }
+      });
+
+      for (const result of state.repoSearch?.results ?? []) {
+        await tx.repoSearchResult.create({
+          data: {
+            workflowRunId,
+            filePath: result.filePath,
+            chunkId: result.chunkId ?? `${result.filePath}:${result.startLine ?? 0}:${result.endLine ?? 0}`,
+            startLine: result.startLine ?? 1,
+            endLine: result.endLine ?? result.startLine ?? 1,
+            relevanceScore: result.score,
+            reason: `${result.matchType} match${result.snippet ? `: ${result.snippet.slice(0, 180)}` : ""}`
+          }
+        });
       }
-    ],
-    codeContext: [
-      {
-        file: "example.service.ts",
-        note: "Check guards and error handling around the reported path."
-      },
-      {
-        file: "example.controller.ts",
-        note: "Confirm request validation and response mapping for the failing scenario."
+
+      for (const agentName of agentTypes) {
+        const agent = agents.find((item) => item.type === getAgentType(agentName));
+
+        if (!agent) {
+          continue;
+        }
+
+        const failedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "failed");
+        const completedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "completed");
+        const startedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "started");
+        const status = failedTrace ? "FAILED" : completedTrace ? "SUCCESS" : "RUNNING";
+
+        const agentRun = await tx.agentRun.create({
+          data: {
+            workflowRunId,
+            agentId: agent.id,
+            status,
+            inputSnapshot: toJsonValue({
+              workflowRunId,
+              ticket: state.ticket,
+              statusAtStart: startedTrace?.inputSummary
+            }),
+            outputSnapshot: toJsonValue(getAgentOutputSnapshot(state, agentName)),
+            errorMessage: failedTrace?.outputSummary,
+            startedAt: startedTrace ? new Date(startedTrace.createdAt) : new Date(),
+            finishedAt: completedTrace || failedTrace ? new Date((completedTrace ?? failedTrace)?.createdAt ?? Date.now()) : null
+          }
+        });
+
+        for (const trace of state.trace.filter((entry) => entry.agent === agentName)) {
+          await tx.traceLog.create({
+            data: {
+              workflowRunId,
+              agentRunId: agentRun.id,
+              level: trace.status === "failed" ? "ERROR" : "INFO",
+              message: `${trace.agent}: ${trace.action} ${trace.status}`,
+              metadata: toJsonValue({
+                inputSummary: trace.inputSummary,
+                outputSummary: trace.outputSummary,
+                status: trace.status
+              }),
+              createdAt: new Date(trace.createdAt)
+            }
+          });
+        }
       }
-    ],
-    fixProposal: {
-      title: `Investigate ${suspectedArea} before implementation`,
-      steps: [
-        "Reproduce with the reporter-provided context",
-        "Inspect scoped files from repository search",
-        "Add failing regression coverage before code changes",
-        "Draft patch only after mentor approves assumptions"
-      ],
-      risks: [
-        "Dummy workflow does not run AI or inspect real repository content yet",
-        "Priority may change after production impact is confirmed"
-      ]
     },
-    mentorDraft: {
-      response:
-        "This workflow produced a review draft only. Mentor should verify assumptions, request missing data if needed, and approve or reject the proposed next steps.",
-      checklist: [
-        "Confirm missing reproduction data",
-        "Validate scoped files are relevant",
-        "Approve test-first implementation plan",
-        "Do not mark the ticket fixed from this draft alone"
-      ]
+    {
+      timeout: 20000
     }
-  };
+  );
 }
 
 function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) {
   return {
     id: workflow.id,
-    status: workflow.status,
+    status: toApiStatus(workflow.status),
     startedAt: workflow.startedAt,
     finishedAt: workflow.finishedAt,
     currentAgent: workflow.currentAgent,
@@ -184,7 +257,7 @@ function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) 
     agents: workflow.agentRuns.map((agentRun) => ({
       id: agentRun.id,
       agent: agentRun.agent,
-      status: agentRun.status,
+      status: agentRun.status.toLowerCase(),
       inputSnapshot: agentRun.inputSnapshot,
       outputSnapshot: agentRun.outputSnapshot,
       errorMessage: agentRun.errorMessage,
@@ -219,26 +292,23 @@ async function findWorkflowOrThrow(id: string) {
 
 export const workflowService = {
   async create(input: CreateWorkflowInput) {
-    const agents = await ensureDefaultAgents();
-    const artifacts = buildDraftArtifacts(input.ticket);
+    await ensureDefaultAgents();
     const repositoryId =
       input.repositoryId ?? (await repositoryService.ensureDefaultCodebaseRepository()).id;
 
-    if (repositoryId) {
-      const repository = await prisma.codeRepository.findUnique({
-        where: { id: repositoryId }
-      });
+    const repository = await prisma.codeRepository.findUnique({
+      where: { id: repositoryId }
+    });
 
-      if (!repository) {
-        throw new AppError(404, "Repository not found");
-      }
-
-      if (repository.status !== "READY") {
-        throw new AppError(400, "Repository is not ready for workflow analysis");
-      }
+    if (!repository) {
+      throw new AppError(404, "Repository not found");
     }
 
-    const workflow = await prisma.$transaction(async (tx) => {
+    if (repository.status !== "READY") {
+      throw new AppError(400, "Repository is not ready for workflow analysis");
+    }
+
+    const created = await prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.create({
         data: {
           title: input.ticket.title,
@@ -253,67 +323,52 @@ export const workflowService = {
         data: {
           ticketId: ticket.id,
           repositoryId,
-          status: "WAITING_FOR_REVIEW",
-          currentAgent: "Human Review",
-          finishedAt: new Date()
+          status: "CREATED",
+          currentAgent: "TicketAnalyzerAgent"
         }
       });
 
       await tx.workflowState.create({
         data: {
           workflowRunId: run.id,
-          inputTicket: input.ticket,
-          ticketAnalysis: artifacts.ticketAnalysis,
-          priorityClassification: artifacts.priorityClassification,
-          repoSearchResults: artifacts.repoSearchResults,
-          codeContext: artifacts.codeContext,
-          fixProposal: artifacts.fixProposal,
-          mentorDraft: artifacts.mentorDraft
+          inputTicket: input.ticket
         }
       });
 
-      for (const result of artifacts.repoSearchResults) {
-        await tx.repoSearchResult.create({
-          data: {
-            workflowRunId: run.id,
-            ...result
-          }
-        });
-      }
-
-      for (const agent of agents) {
-        const agentRun = await tx.agentRun.create({
-          data: {
-            workflowRunId: run.id,
-            agentId: agent.id,
-            status: "SUCCESS",
-            inputSnapshot: { ticketId: ticket.id, workflowRunId: run.id },
-            outputSnapshot: { message: `${agent.name} completed using dummy data.` },
-            finishedAt: new Date()
-          }
-        });
-
-        await tx.traceLog.create({
-          data: {
-            workflowRunId: run.id,
-            agentRunId: agentRun.id,
-            level: "INFO",
-            message: `${agent.name} completed successfully.`,
-            metadata: {
-              executionOrder: agent.executionOrder,
-              agentType: agent.type
-            }
-          }
-        });
-      }
-
-      return tx.workflowRun.findUniqueOrThrow({
-        where: { id: run.id },
-        include: workflowInclude
-      });
+      return { ticket, run };
     });
 
-    return mapWorkflow(workflow);
+    const timestamp = nowIso();
+    const initialState: TicketWorkflowState = {
+      id: created.run.id,
+      status: "created",
+      ticket: {
+        title: created.ticket.title,
+        description: created.ticket.description,
+        metadata: {
+          reporterName: created.ticket.reporterName,
+          source: created.ticket.source,
+          reporterId: created.ticket.reporterId
+        }
+      },
+      repoConfig: {
+        repositoryId,
+        repoPath: repository.rootPath,
+        maxResults: input.maxResults,
+        retrievalStrategy: input.retrievalStrategy,
+        indexName: input.indexName ?? env.REPO_INDEX_NAME,
+        forceReindex: input.forceReindex
+      },
+      errors: [],
+      trace: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    const finalState = await runTicketWorkflow(initialState);
+    await persistWorkflowOutcome(created.run.id, finalState);
+
+    return mapWorkflow(await findWorkflowOrThrow(created.run.id));
   },
 
   async getById(id: string) {

@@ -30,7 +30,15 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().trim().min(1).default("7d"),
   JWT_ACCESS_EXPIRES_IN: z.string().trim().min(1).default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().trim().min(1).default("30d"),
-  GOOGLE_CLIENT_ID: z.string().trim().optional()
+  GOOGLE_CLIENT_ID: z.string().trim().optional(),
+  AI_BASE_URL: z.string().trim().default("https://api.openai.com/v1"),
+  AI_EXTRA_HEADERS: z.string().trim().default("{}"),
+  OPENAI_API_KEY: z.string().optional(),
+  AI_MODEL_ANALYZER: z.string().trim().default("gpt-4.1-mini"),
+  AI_MODEL_PRIORITY: z.string().trim().default("gpt-4.1-mini"),
+  EMBEDDING_MODEL: z.string().trim().default("text-embedding-3-small"),
+  REPO_INDEX_NAME: z.string().trim().default("default-repo-index"),
+  PGVECTOR_CODE_CHUNKS_TABLE: z.string().trim().default("code_chunks")
 }).superRefine((value, context) => {
   if (value.STORAGE_DRIVER !== "sftp") {
     return;
