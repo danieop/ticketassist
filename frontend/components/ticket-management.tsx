@@ -15,6 +15,12 @@ type TicketRow = {
   latestWorkflowRun?: {
     id: string;
     status: string;
+    repository?: {
+      id: string;
+      name: string;
+      rootPath: string;
+      status: string;
+    } | null;
     startedAt: string;
     finishedAt?: string | null;
   } | null;
@@ -27,6 +33,15 @@ type TicketFormState = {
   description: string;
   reporterName: string;
   source: TicketSource;
+};
+
+type CodeRepository = {
+  id: string;
+  name: string;
+  description?: string | null;
+  rootPath: string;
+  status: string;
+  fileCount: number;
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
@@ -72,6 +87,7 @@ function toFormState(ticket: TicketRow): TicketFormState {
 
 export function TicketManagement() {
   const [tickets, setTickets] = useState<TicketRow[]>([]);
+  const [defaultCodebase, setDefaultCodebase] = useState<CodeRepository | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState("");
   const [form, setForm] = useState<TicketFormState>(emptyForm);
   const [search, setSearch] = useState("");
@@ -121,8 +137,30 @@ export function TicketManagement() {
     }
   };
 
+  const loadDefaultCodebase = async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/repositories`);
+
+      if (!response.ok) {
+        throw new Error(await getResponseErrorMessage(response));
+      }
+
+      const repositories = (await response.json()) as CodeRepository[];
+      const routedCodebase =
+        repositories.find((repository) => repository.description === "Local default codebase for ticket routing.") ??
+        repositories.find((repository) => repository.name === "CardSeller") ??
+        repositories[0] ??
+        null;
+
+      setDefaultCodebase(routedCodebase);
+    } catch (error) {
+      setStatusMessage(getErrorMessage(error));
+    }
+  };
+
   useEffect(() => {
     void loadTickets();
+    void loadDefaultCodebase();
   }, []);
 
   const updateField = (field: keyof TicketFormState, value: string) => {
@@ -224,6 +262,9 @@ export function TicketManagement() {
         <div>
           <p className="eyebrow">Tickets</p>
           <h2>Ticket queue</h2>
+          <p className="ticket-routing-line">
+            Routing target: {defaultCodebase ? `${defaultCodebase.name} (${defaultCodebase.fileCount} files)` : "Loading codebase"}
+          </p>
         </div>
         <div className="ticket-toolbar-actions">
           <button className="secondary-action compact-action" disabled={isLoading} onClick={() => void loadTickets()} type="button">
@@ -281,6 +322,9 @@ export function TicketManagement() {
                   <small>
                     {ticket.reporterName} - {formatDate(ticket.createdAt)}
                   </small>
+                  <small>
+                    Codebase: {ticket.latestWorkflowRun?.repository?.name ?? defaultCodebase?.name ?? "Loading"}
+                  </small>
                 </button>
               </article>
             ))}
@@ -307,6 +351,14 @@ export function TicketManagement() {
           </div>
 
           {statusMessage ? <p className="repo-status-message">{statusMessage}</p> : null}
+
+          <div className="ticket-route-summary">
+            <div>
+              <span>Codebase target</span>
+              <strong>{defaultCodebase?.name ?? "Loading codebase"}</strong>
+            </div>
+            <p>{defaultCodebase?.rootPath ?? "Resolving local codebase path"}</p>
+          </div>
 
           <form className="ticket-editor-form" onSubmit={(event) => void saveTicket(event)}>
             <label>
@@ -378,8 +430,12 @@ export function TicketManagement() {
                 <dd>{formatDate(selectedTicket.updatedAt)}</dd>
               </div>
               <div>
-                <dt>Latest workflow</dt>
-                <dd>{selectedTicket.latestWorkflowRun?.status ?? "None"}</dd>
+                <dt>Codebase</dt>
+                <dd>{selectedTicket.latestWorkflowRun?.repository?.name ?? "None"}</dd>
+              </div>
+              <div className="ticket-detail-meta-wide">
+                <dt>Codebase path</dt>
+                <dd>{selectedTicket.latestWorkflowRun?.repository?.rootPath ?? "Not routed"}</dd>
               </div>
             </dl>
           ) : null}

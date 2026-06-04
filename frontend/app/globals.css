@@ -901,6 +901,13 @@ button {
   line-height: 1.2;
 }
 
+.ticket-routing-line {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .ticket-toolbar-actions,
 .ticket-editor-actions {
   display: flex;
@@ -1017,6 +1024,44 @@ button {
   font-weight: 700;
 }
 
+.ticket-route-summary {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 16px;
+  border: 1px solid #abd7c5;
+  border-radius: 8px;
+  padding: 13px 14px;
+  background: #ecfdf5;
+}
+
+.ticket-route-summary div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ticket-route-summary span {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticket-route-summary strong {
+  color: var(--text);
+  font-size: 17px;
+}
+
+.ticket-route-summary p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .ticket-form-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 180px;
@@ -1049,6 +1094,10 @@ button {
   margin: 5px 0 0;
   overflow-wrap: anywhere;
   font-weight: 700;
+}
+
+.ticket-detail-meta-wide {
+  grid-column: 1 / -1;
 }
 
 .danger-action {
