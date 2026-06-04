@@ -8,13 +8,13 @@ The app uses:
 - Prisma + PostgreSQL for workflow persistence
 - PostgreSQL + pgvector for repository vector search
 - LangGraph JS for workflow orchestration
-- OpenAI-compatible chat/completions for ticket analysis and priority classification
+- OpenAI-compatible chat/completions for ticket analysis, priority classification, code context selection, fix proposal, and mentor draft generation
 - OpenAI-compatible embeddings through `AI_BASE_URL`
 - `text-embedding-3-small` as the configured embedding model
 
 ## Workflow Overview
 
-The implemented workflow stops after repository search. It does not generate code fixes, mentor drafts, or customer replies.
+The implemented workflow runs all six business agents and stops at developer confirmation. It generates a fix proposal and mentor draft, but it does not modify code or send customer replies automatically. The developer submits the draft to the mentor queue explicitly.
 
 Execution order:
 
@@ -23,6 +23,9 @@ START
 -> ticketAnalyzerNode
 -> priorityClassifierNode
 -> repoSearchNode
+-> codeContextNode
+-> fixProposalNode
+-> mentorDraftNode
 -> END
 ```
 
@@ -33,12 +36,16 @@ created
 -> ticket_analyzed
 -> priority_classified
 -> repo_searched
+-> code_context_ready
+-> fix_proposed
+-> mentor_draft_ready
+-> waiting_for_review after developer confirmation
 ```
 
 Failure flow:
 
 ```text
-created / ticket_analyzed / priority_classified
+created / ticket_analyzed / priority_classified / repo_searched / code_context_ready / fix_proposed
 -> failed
 ```
 
@@ -85,6 +92,12 @@ Body:
 }
 ```
 
+Submit a ready mentor draft to the mentor queue:
+
+```http
+POST /api/workflows/:id/submit
+```
+
 ## Workflow State
 
 The central runtime state is `TicketWorkflowState` in `backend/src/services/workflow-state.ts`.
@@ -97,6 +110,9 @@ Important fields:
 - `analysis`: output from `TicketAnalyzerAgent`
 - `priority`: output from `PriorityClassifierAgent`
 - `repoSearch`: output from `RepoSearchAgent`
+- `codeContext`: output from `CodeContextAgent`
+- `fixProposal`: output from `FixProposalAgent`
+- `mentorDraft`: output from `MentorDraftAgent`
 - `errors`: structured node errors
 - `trace`: started/completed/failed trace entries
 
@@ -213,6 +229,77 @@ Success status:
 
 ```text
 repo_searched
+```
+
+### 4. CodeContextAgent
+
+Node: `codeContextNode`
+
+Responsibility:
+
+- Validate repository search output.
+- Select the most relevant files/chunks from search results.
+- Explain why each file/chunk is relevant.
+- Capture risk notes for mentor review.
+- Do not propose a fix.
+
+Current implementation:
+
+- Uses the configured OpenAI-compatible chat/completions provider.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Sends only the top focused search results, not the whole repository.
+- Falls back to deterministic selection from ranked search results if the provider call or JSON validation fails.
+
+Success status:
+
+```text
+code_context_ready
+```
+
+### 5. FixProposalAgent
+
+Node: `fixProposalNode`
+
+Responsibility:
+
+- Validate code context output.
+- Draft hypotheses, recommended approach, risks, and verification steps.
+- Do not modify source code.
+- Do not claim the issue is fixed.
+
+Current implementation:
+
+- Uses the configured OpenAI-compatible chat/completions provider.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Falls back to a deterministic constrained proposal if the provider call or JSON validation fails.
+
+Success status:
+
+```text
+fix_proposed
+```
+
+### 6. MentorDraftAgent
+
+Node: `mentorDraftNode`
+
+Responsibility:
+
+- Validate fix proposal output.
+- Generate a concise mentor-review draft and checklist.
+- Mark the workflow ready for human review.
+- Do not send a customer response automatically.
+
+Current implementation:
+
+- Uses the configured OpenAI-compatible chat/completions provider.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Falls back to a deterministic mentor draft if the provider call or JSON validation fails.
+
+Success status:
+
+```text
+mentor_draft_ready
 ```
 
 ## Repository Indexing
@@ -499,27 +586,36 @@ The full workflow has been tested through the service layer.
 Hybrid test:
 
 ```text
-status: repo_searched
+status: mentor_draft_ready
 agents:
   TICKET_ANALYZER:success
   PRIORITY_CLASSIFIER:success
   REPO_SEARCH:success
-traceCount: 6
+  CODE_CONTEXT:success
+  FIX_PROPOSAL:success
+  MENTOR_DRAFT:success
+traceCount: 12
 repoSearchResults: 10
 indexName: default-repo-index
 indexedChunks: 413
 embeddingModel: text-embedding-3-small
 warnings: []
+codeContext: present
+fixProposal: present
+mentorDraft: present
 ```
 
 LLM workflow test:
 
 ```text
-status: repo_searched
+status: mentor_draft_ready
 agents:
   TICKET_ANALYZER:success
   PRIORITY_CLASSIFIER:success
   REPO_SEARCH:success
+  CODE_CONTEXT:success
+  FIX_PROPOSAL:success
+  MENTOR_DRAFT:success
 TicketAnalyzerAgent trace: LLM gpt-4.1-mini
 PriorityClassifierAgent trace: LLM gpt-4.1-mini
 ```
@@ -546,12 +642,8 @@ count: 413
 
 ## Current Limitations
 
-- Ticket analysis and priority classification use LLM calls, but still fall back to deterministic logic if the provider fails.
+- Ticket analysis, priority classification, code context selection, fix proposal, and mentor draft generation use LLM calls, but still fall back to deterministic logic if the provider fails.
 - Chunking is line-based, not AST-based.
 - Hybrid ranking is simple and deterministic.
-- The workflow does not implement:
-  - CodeContextAgent
-  - FixProposalAgent
-  - MentorDraftAgent
 - The workflow does not modify source code.
 - The workflow does not send mentor/customer responses.

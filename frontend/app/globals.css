@@ -1113,6 +1113,265 @@ button {
   font-weight: 800;
 }
 
+.workflow-console {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.workflow-console-grid {
+  display: grid;
+  grid-template-columns: 420px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.workflow-ticket-form,
+.mentor-review-form {
+  display: grid;
+  gap: 14px;
+}
+
+.workflow-ticket-form label,
+.mentor-review-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.workflow-ticket-form input,
+.workflow-ticket-form textarea,
+.workflow-ticket-form select,
+.mentor-review-form textarea,
+.mentor-review-form select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcff;
+  color: var(--text);
+}
+
+.workflow-ticket-form input,
+.workflow-ticket-form select,
+.mentor-review-form select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.workflow-ticket-form textarea,
+.mentor-review-form textarea {
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.workflow-ticket-form input:focus,
+.workflow-ticket-form textarea:focus,
+.workflow-ticket-form select:focus,
+.mentor-review-form textarea:focus,
+.mentor-review-form select:focus {
+  border-color: var(--blue);
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.agent-step-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-step-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 72px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+}
+
+.agent-step-card > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e6ebf3;
+  color: var(--ink-soft);
+  font-weight: 900;
+}
+
+.agent-step-success > span {
+  background: var(--green);
+  color: #ffffff;
+}
+
+.agent-step-running > span {
+  background: var(--amber);
+  color: #ffffff;
+}
+
+.agent-step-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.agent-step-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.workflow-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.mentor-submit-panel {
+  grid-column: 1 / -1;
+}
+
+.workflow-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.workflow-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(140px, 0.8fr) auto minmax(130px, 0.7fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 840px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+  color: var(--text);
+  text-align: left;
+}
+
+.workflow-row:hover {
+  border-color: #9bb8f4;
+  background: var(--surface-soft);
+}
+
+.workflow-row span:first-child {
+  overflow-wrap: anywhere;
+  font-weight: 800;
+}
+
+.mentor-queue-shell {
+  margin-top: 18px;
+}
+
+.mentor-queue-grid {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.mentor-queue-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mentor-queue-item {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+  color: var(--text);
+  text-align: left;
+}
+
+.mentor-queue-item-active,
+.mentor-queue-item:hover {
+  border-color: #9bb8f4;
+  background: var(--surface-soft);
+}
+
+.mentor-queue-item > span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mentor-queue-item strong {
+  overflow-wrap: anywhere;
+}
+
+.mentor-queue-item small {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.mentor-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 18px;
+  align-items: start;
+}
+
+.mentor-review-main {
+  display: grid;
+  gap: 18px;
+}
+
+.review-section {
+  display: grid;
+  gap: 12px;
+}
+
+.review-section h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.mentor-decision-panel {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcff;
+}
+
+.decision-summary {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.decision-summary span {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.decision-summary strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.decision-summary p {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
 .repository-toolbar {
   display: flex;
   align-items: flex-start;
@@ -1332,8 +1591,15 @@ button {
 
   .codebase-grid,
   .github-browser,
-  .ticket-crud-grid {
+  .ticket-crud-grid,
+  .workflow-console-grid,
+  .mentor-queue-grid,
+  .mentor-review-layout {
     grid-template-columns: 1fr;
+  }
+
+  .mentor-decision-panel {
+    position: static;
   }
 
   .file-tree {
@@ -1377,9 +1643,23 @@ button {
   .ticket-detail-meta,
   .ticket-form-row,
   .analysis-grid,
+  .workflow-results-grid,
   .review-grid,
   .side-column {
     grid-template-columns: 1fr;
+  }
+
+  .mentor-submit-panel {
+    grid-column: auto;
+  }
+
+  .agent-step-card {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .agent-step-card .status-badge {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 
   .workflow-timeline {

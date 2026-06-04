@@ -48,20 +48,35 @@ export async function callJsonChat(input: {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const response = await fetch(`${env.AI_BASE_URL.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      ...parseExtraHeaders()
-    },
-    body: JSON.stringify({
-      model: input.model,
-      messages: input.messages,
-      temperature: input.temperature ?? 0.1,
-      response_format: { type: "json_object" }
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  let response: Response;
+
+  try {
+    response = await fetch(`${env.AI_BASE_URL.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        ...parseExtraHeaders()
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature ?? 0.1,
+        response_format: { type: "json_object" }
+      })
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("LLM provider timed out after 25 seconds");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");

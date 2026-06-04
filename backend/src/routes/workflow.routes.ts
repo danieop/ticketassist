@@ -2,6 +2,8 @@ import { Router } from "express";
 import {
   createWorkflow,
   getWorkflow,
+  listWorkflows,
+  submitWorkflowForReview,
   reviewWorkflow
 } from "../controllers/workflow.controller.js";
 
@@ -25,6 +27,7 @@ export const workflowRouter = Router();
  *         description: Workflow state created
  */
 workflowRouter.post("/", createWorkflow);
+workflowRouter.get("/", listWorkflows);
 
 /**
  * @openapi
@@ -46,6 +49,7 @@ workflowRouter.post("/", createWorkflow);
  *         description: Workflow not found
  */
 workflowRouter.get("/:id", getWorkflow);
+workflowRouter.post("/:id/submit", submitWorkflowForReview);
 
 /**
  * @openapi

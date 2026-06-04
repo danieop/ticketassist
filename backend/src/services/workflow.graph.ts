@@ -5,10 +5,16 @@ import { repoSearchService, generateQueryTerms, generateSemanticQuery } from "./
 import {
   appendError,
   appendTrace,
+  codeContextSchema,
+  fixProposalSchema,
+  mentorDraftSchema,
   nowIso,
   priorityClassificationSchema,
   repoSearchSchema,
   ticketAnalysisSchema,
+  type CodeContext,
+  type FixProposal,
+  type MentorDraft,
   type PriorityClassification,
   type TicketAnalysis,
   type TicketWorkflowState
@@ -235,6 +241,240 @@ async function classifyPriorityWithLlm(state: TicketWorkflowState): Promise<Prio
   return priorityClassificationSchema.parse(result);
 }
 
+function getTopSearchResults(state: TicketWorkflowState, limit = 6) {
+  return [...(state.repoSearch?.results ?? [])]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+}
+
+function getMatchedTerms(state: TicketWorkflowState, text: string) {
+  const lowerText = text.toLowerCase();
+  return (state.repoSearch?.queryTerms ?? []).filter((term) => lowerText.includes(term.toLowerCase())).slice(0, 8);
+}
+
+function deterministicCodeContext(state: TicketWorkflowState): CodeContext {
+  const topResults = getTopSearchResults(state);
+  const relevantFiles = topResults.map((result) => {
+    const searchableText = [result.filePath, result.snippet, ...(result.matchedLines?.map((line) => line.text) ?? [])]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      filePath: result.filePath,
+      startLine: result.startLine,
+      endLine: result.endLine,
+      relevanceScore: result.score,
+      reason: `${result.matchType} match for ${state.analysis?.affectedFeature ?? "ticket"} context`,
+      matchedTerms: getMatchedTerms(state, searchableText),
+      excerpt: result.snippet ? summarizeText(result.snippet, 420) : undefined,
+      riskNotes: [
+        result.matchType === "filename"
+          ? "Filename relevance should be confirmed against implementation details."
+          : "Review the matched chunk before changing behavior."
+      ]
+    };
+  });
+
+  const riskNotes = [
+    state.priority?.level === "critical" || state.priority?.level === "high"
+      ? "High-impact ticket: verify the fix path with regression coverage before release."
+      : "Confirm user impact before broadening the implementation scope.",
+    relevantFiles.length === 0
+      ? "Repository search returned no focused files; collect more ticket details or reindex the repository."
+      : "Search results are candidate context, not proof of root cause."
+  ];
+
+  return codeContextSchema.parse({
+    summary:
+      relevantFiles.length > 0
+        ? `Selected ${relevantFiles.length} likely file/chunk touchpoint(s) for ${state.analysis?.affectedFeature ?? "the reported issue"}.`
+        : "No repository touchpoints were selected from search results.",
+    relevantFiles,
+    riskNotes,
+    generatedAt: nowIso()
+  });
+}
+
+async function buildCodeContextWithLlm(state: TicketWorkflowState): Promise<CodeContext> {
+  const result = await callJsonChat({
+    model: env.AI_MODEL_ANALYZER,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are CodeContextAgent. Select the most relevant repository search results for mentor review. Do not propose a code fix. Return JSON only with keys: summary, relevantFiles, riskNotes, generatedAt."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          ticket: state.ticket,
+          analysis: state.analysis,
+          priority: state.priority,
+          searchQuery: state.repoSearch?.semanticQuery,
+          queryTerms: state.repoSearch?.queryTerms,
+          results: getTopSearchResults(state, 8).map((result) => ({
+            filePath: result.filePath,
+            score: result.score,
+            matchType: result.matchType,
+            startLine: result.startLine,
+            endLine: result.endLine,
+            matchedLines: result.matchedLines,
+            snippet: result.snippet ? summarizeText(result.snippet, 700) : undefined,
+            symbols: result.symbols
+          })),
+          requiredJsonShape: {
+            summary: "string",
+            relevantFiles: [
+              {
+                filePath: "string",
+                startLine: "optional number",
+                endLine: "optional number",
+                relevanceScore: "number",
+                reason: "string",
+                matchedTerms: ["optional string"],
+                excerpt: "optional string",
+                riskNotes: ["optional string"]
+              }
+            ],
+            riskNotes: ["string"],
+            generatedAt: nowIso()
+          }
+        })
+      }
+    ]
+  });
+
+  return codeContextSchema.parse(result);
+}
+
+function deterministicFixProposal(state: TicketWorkflowState): FixProposal {
+  const feature = state.analysis?.affectedFeature ?? "reported";
+  const files = state.codeContext?.relevantFiles.map((file) => file.filePath).slice(0, 4) ?? [];
+
+  return fixProposalSchema.parse({
+    title: `Investigate ${feature} workflow failure with focused repository context`,
+    hypotheses: [
+      `${state.analysis?.summary ?? "The reported behavior"} may originate in one of the selected touchpoints.`,
+      files.length > 0
+        ? `Most likely files to inspect first: ${files.join(", ")}.`
+        : "Repository evidence is weak; more reproduction details may be needed."
+    ],
+    recommendedApproach:
+      "Confirm the failing path with reproduction steps, inspect the selected code context, make the smallest behavior change that addresses the root cause, and add regression coverage around the affected flow.",
+    steps: [
+      "Reproduce the ticket using the reporter-provided conditions.",
+      "Inspect the top code context files and trace the affected flow.",
+      "Implement the smallest guarded change once the root cause is confirmed.",
+      "Add or update regression tests for the failing path and any fallback path."
+    ],
+    risks: [
+      ...(state.codeContext?.riskNotes ?? []),
+      "Do not assume the first search result is the root cause without reading the surrounding code."
+    ],
+    verificationSteps: [
+      "Run the relevant unit or integration tests for the affected flow.",
+      "Manually verify the reported reproduction path.",
+      "Check that nearby successful paths still behave as expected."
+    ],
+    confidence: files.length > 0 ? 0.72 : 0.45
+  });
+}
+
+async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixProposal> {
+  const result = await callJsonChat({
+    model: env.AI_MODEL_ANALYZER,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are FixProposalAgent. Propose a constrained implementation approach for mentor review. Do not claim code was changed. Return JSON only with keys: title, hypotheses, recommendedApproach, steps, risks, verificationSteps, confidence."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          ticket: state.ticket,
+          analysis: state.analysis,
+          priority: state.priority,
+          codeContext: state.codeContext,
+          requiredJsonShape: {
+            title: "string",
+            hypotheses: ["string"],
+            recommendedApproach: "string",
+            steps: ["string"],
+            risks: ["string"],
+            verificationSteps: ["string"],
+            confidence: "number 0..1"
+          }
+        })
+      }
+    ]
+  });
+
+  return fixProposalSchema.parse(result);
+}
+
+function deterministicMentorDraft(state: TicketWorkflowState): MentorDraft {
+  const priority = state.priority ? `${state.priority.level} priority` : "unclassified priority";
+  const contextFiles = state.codeContext?.relevantFiles.map((file) => file.filePath).slice(0, 3) ?? [];
+
+  return mentorDraftSchema.parse({
+    response: [
+      `Ticket summary: ${state.analysis?.summary ?? summarizeText(state.ticket.description)}.`,
+      `Current assessment: ${priority}. ${state.priority?.reason ?? ""}`.trim(),
+      contextFiles.length > 0
+        ? `Likely code context includes ${contextFiles.join(", ")}.`
+        : "Repository context is not strong enough yet; mentor may need more information.",
+      `Recommended next step: ${state.fixProposal?.recommendedApproach ?? "Review the ticket and confirm scope before implementation."}`
+    ].join(" "),
+    checklist: [
+      "Confirm reproduction steps and affected environment.",
+      "Review selected code context before approving implementation.",
+      "Validate proposed risks and verification steps.",
+      "Decide whether more information is needed from the reporter."
+    ],
+    internalNotes: [
+      "Draft is for mentor review only.",
+      "No customer response has been sent automatically."
+    ],
+    generatedAt: nowIso()
+  });
+}
+
+async function buildMentorDraftWithLlm(state: TicketWorkflowState): Promise<MentorDraft> {
+  const result = await callJsonChat({
+    model: env.AI_MODEL_ANALYZER,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are MentorDraftAgent. Draft a concise mentor-review note using workflow outputs. Do not say the code is fixed. Do not send a customer response. Return JSON only with keys: response, checklist, internalNotes, generatedAt."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          ticket: state.ticket,
+          analysis: state.analysis,
+          priority: state.priority,
+          repoSearchSummary: {
+            queryTerms: state.repoSearch?.queryTerms,
+            resultCount: state.repoSearch?.results.length
+          },
+          codeContext: state.codeContext,
+          fixProposal: state.fixProposal,
+          requiredJsonShape: {
+            response: "string",
+            checklist: ["string"],
+            internalNotes: ["optional string"],
+            generatedAt: nowIso()
+          }
+        })
+      }
+    ]
+  });
+
+  return mentorDraftSchema.parse(result);
+}
+
 async function ticketAnalyzerNode(input: GraphInput): Promise<GraphInput> {
   const started = appendTrace(input.state, {
     agent: "TicketAnalyzerAgent",
@@ -454,6 +694,201 @@ async function repoSearchNode(input: GraphInput): Promise<GraphInput> {
   }
 }
 
+async function codeContextNode(input: GraphInput): Promise<GraphInput> {
+  const started = appendTrace(input.state, {
+    agent: "CodeContextAgent",
+    action: "Select focused code context",
+    status: "started",
+    inputSummary: input.state.repoSearch?.semanticQuery
+  });
+
+  try {
+    if (started.status !== "repo_searched") {
+      throw new Error(`CodeContextAgent expected status repo_searched but received ${started.status}`);
+    }
+
+    if (!started.repoSearch) {
+      throw new Error("Repository search results are required before code context selection");
+    }
+
+    let codeContext: CodeContext;
+    let outputSummary: string;
+
+    try {
+      codeContext = await buildCodeContextWithLlm(started);
+      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${codeContext.summary}`;
+    } catch (llmError) {
+      codeContext = deterministicCodeContext(started);
+      outputSummary = `LLM fallback used: ${
+        llmError instanceof Error ? llmError.message : "code context LLM failed"
+      }. ${codeContext.summary}`;
+    }
+
+    const completed = appendTrace(
+      {
+        ...started,
+        status: "code_context_ready",
+        codeContext,
+        updatedAt: nowIso()
+      },
+      {
+        agent: "CodeContextAgent",
+        action: "Stored focused code context",
+        status: "completed",
+        outputSummary
+      }
+    );
+
+    return { state: completed };
+  } catch (error) {
+    const failed = appendTrace(
+      appendError(started, {
+        agent: "CodeContextAgent",
+        message: error instanceof Error ? error.message : "Code context selection failed",
+        recoverable: false
+      }),
+      {
+        agent: "CodeContextAgent",
+        action: "Select focused code context",
+        status: "failed",
+        outputSummary: error instanceof Error ? error.message : "Code context selection failed"
+      }
+    );
+
+    return { state: failed };
+  }
+}
+
+async function fixProposalNode(input: GraphInput): Promise<GraphInput> {
+  const started = appendTrace(input.state, {
+    agent: "FixProposalAgent",
+    action: "Draft fix proposal",
+    status: "started",
+    inputSummary: input.state.codeContext?.summary
+  });
+
+  try {
+    if (started.status !== "code_context_ready") {
+      throw new Error(`FixProposalAgent expected status code_context_ready but received ${started.status}`);
+    }
+
+    if (!started.codeContext) {
+      throw new Error("Code context is required before fix proposal generation");
+    }
+
+    let fixProposal: FixProposal;
+    let outputSummary: string;
+
+    try {
+      fixProposal = await buildFixProposalWithLlm(started);
+      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${fixProposal.title}`;
+    } catch (llmError) {
+      fixProposal = deterministicFixProposal(started);
+      outputSummary = `LLM fallback used: ${
+        llmError instanceof Error ? llmError.message : "fix proposal LLM failed"
+      }. ${fixProposal.title}`;
+    }
+
+    const completed = appendTrace(
+      {
+        ...started,
+        status: "fix_proposed",
+        fixProposal,
+        updatedAt: nowIso()
+      },
+      {
+        agent: "FixProposalAgent",
+        action: "Stored fix proposal",
+        status: "completed",
+        outputSummary
+      }
+    );
+
+    return { state: completed };
+  } catch (error) {
+    const failed = appendTrace(
+      appendError(started, {
+        agent: "FixProposalAgent",
+        message: error instanceof Error ? error.message : "Fix proposal generation failed",
+        recoverable: false
+      }),
+      {
+        agent: "FixProposalAgent",
+        action: "Draft fix proposal",
+        status: "failed",
+        outputSummary: error instanceof Error ? error.message : "Fix proposal generation failed"
+      }
+    );
+
+    return { state: failed };
+  }
+}
+
+async function mentorDraftNode(input: GraphInput): Promise<GraphInput> {
+  const started = appendTrace(input.state, {
+    agent: "MentorDraftAgent",
+    action: "Draft mentor review note",
+    status: "started",
+    inputSummary: input.state.fixProposal?.title
+  });
+
+  try {
+    if (started.status !== "fix_proposed") {
+      throw new Error(`MentorDraftAgent expected status fix_proposed but received ${started.status}`);
+    }
+
+    if (!started.fixProposal) {
+      throw new Error("Fix proposal is required before mentor draft generation");
+    }
+
+    let mentorDraft: MentorDraft;
+    let outputSummary: string;
+
+    try {
+      mentorDraft = await buildMentorDraftWithLlm(started);
+      outputSummary = `LLM ${env.AI_MODEL_ANALYZER}: ${summarizeText(mentorDraft.response)}`;
+    } catch (llmError) {
+      mentorDraft = deterministicMentorDraft(started);
+      outputSummary = `LLM fallback used: ${
+        llmError instanceof Error ? llmError.message : "mentor draft LLM failed"
+      }. ${summarizeText(mentorDraft.response)}`;
+    }
+
+    const completed = appendTrace(
+      {
+        ...started,
+        status: "mentor_draft_ready",
+        mentorDraft,
+        updatedAt: nowIso()
+      },
+      {
+        agent: "MentorDraftAgent",
+        action: "Stored mentor draft for developer confirmation",
+        status: "completed",
+        outputSummary
+      }
+    );
+
+    return { state: completed };
+  } catch (error) {
+    const failed = appendTrace(
+      appendError(started, {
+        agent: "MentorDraftAgent",
+        message: error instanceof Error ? error.message : "Mentor draft generation failed",
+        recoverable: false
+      }),
+      {
+        agent: "MentorDraftAgent",
+        action: "Draft mentor review note",
+        status: "failed",
+        outputSummary: error instanceof Error ? error.message : "Mentor draft generation failed"
+      }
+    );
+
+    return { state: failed };
+  }
+}
+
 function nextOrEnd(input: GraphInput) {
   return input.state.status === "failed" ? END : "next";
 }
@@ -462,6 +897,9 @@ const compiledWorkflowGraph = new StateGraph(WorkflowAnnotation)
   .addNode("ticketAnalyzerNode", ticketAnalyzerNode)
   .addNode("priorityClassifierNode", priorityClassifierNode)
   .addNode("repoSearchNode", repoSearchNode)
+  .addNode("codeContextNode", codeContextNode)
+  .addNode("fixProposalNode", fixProposalNode)
+  .addNode("mentorDraftNode", mentorDraftNode)
   .addEdge(START, "ticketAnalyzerNode")
   .addConditionalEdges("ticketAnalyzerNode", nextOrEnd, {
     next: "priorityClassifierNode",
@@ -471,7 +909,19 @@ const compiledWorkflowGraph = new StateGraph(WorkflowAnnotation)
     next: "repoSearchNode",
     [END]: END
   })
-  .addEdge("repoSearchNode", END)
+  .addConditionalEdges("repoSearchNode", nextOrEnd, {
+    next: "codeContextNode",
+    [END]: END
+  })
+  .addConditionalEdges("codeContextNode", nextOrEnd, {
+    next: "fixProposalNode",
+    [END]: END
+  })
+  .addConditionalEdges("fixProposalNode", nextOrEnd, {
+    next: "mentorDraftNode",
+    [END]: END
+  })
+  .addEdge("mentorDraftNode", END)
   .compile();
 
 export async function runTicketWorkflow(initialState: TicketWorkflowState) {

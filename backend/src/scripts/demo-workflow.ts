@@ -31,12 +31,12 @@ async function main() {
     )
   );
 
-  if (workflow.status !== "repo_searched") {
-    throw new Error(`Expected repo_searched status, received ${workflow.status}`);
+  if (workflow.status !== "mentor_draft_ready") {
+    throw new Error(`Expected mentor_draft_ready status, received ${workflow.status}`);
   }
 
-  if (workflow.agents.length !== 3 || workflow.agents.some((agent) => agent.status !== "success")) {
-    throw new Error("Expected exactly three successful business agent runs");
+  if (workflow.agents.length !== 6 || workflow.agents.some((agent) => agent.status !== "success")) {
+    throw new Error("Expected exactly six successful business agent runs");
   }
 }
 

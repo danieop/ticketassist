@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type WorkflowStatus as DbWorkflowStatus } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
@@ -80,11 +80,26 @@ const workflowInclude = {
   }
 } as const;
 
-const dbStatusByWorkflowStatus: Record<WorkflowStatus, "CREATED" | "TICKET_ANALYZED" | "PRIORITY_CLASSIFIED" | "REPO_SEARCHED" | "FAILED"> = {
+const dbStatusByWorkflowStatus: Record<
+  WorkflowStatus,
+  | "CREATED"
+  | "TICKET_ANALYZED"
+  | "PRIORITY_CLASSIFIED"
+  | "REPO_SEARCHED"
+  | "CODE_CONTEXT_READY"
+  | "FIX_PROPOSED"
+  | "MENTOR_DRAFT_READY"
+  | "WAITING_FOR_REVIEW"
+  | "FAILED"
+> = {
   created: "CREATED",
   ticket_analyzed: "TICKET_ANALYZED",
   priority_classified: "PRIORITY_CLASSIFIED",
   repo_searched: "REPO_SEARCHED",
+  code_context_ready: "CODE_CONTEXT_READY",
+  fix_proposed: "FIX_PROPOSED",
+  mentor_draft_ready: "MENTOR_DRAFT_READY",
+  waiting_for_review: "WAITING_FOR_REVIEW",
   failed: "FAILED"
 };
 
@@ -127,7 +142,23 @@ function getAgentType(agentName: string) {
     return "PRIORITY_CLASSIFIER";
   }
 
-  return "REPO_SEARCH";
+  if (agentName === "RepoSearchAgent") {
+    return "REPO_SEARCH";
+  }
+
+  if (agentName === "CodeContextAgent") {
+    return "CODE_CONTEXT";
+  }
+
+  if (agentName === "FixProposalAgent") {
+    return "FIX_PROPOSAL";
+  }
+
+  if (agentName === "MentorDraftAgent") {
+    return "MENTOR_DRAFT";
+  }
+
+  return null;
 }
 
 function getAgentOutputSnapshot(state: TicketWorkflowState, agentName: string) {
@@ -139,7 +170,23 @@ function getAgentOutputSnapshot(state: TicketWorkflowState, agentName: string) {
     return state.priority ?? null;
   }
 
-  return state.repoSearch ?? null;
+  if (agentName === "RepoSearchAgent") {
+    return state.repoSearch ?? null;
+  }
+
+  if (agentName === "CodeContextAgent") {
+    return state.codeContext ?? null;
+  }
+
+  if (agentName === "FixProposalAgent") {
+    return state.fixProposal ?? null;
+  }
+
+  if (agentName === "MentorDraftAgent") {
+    return state.mentorDraft ?? null;
+  }
+
+  return null;
 }
 
 async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkflowState) {
@@ -164,6 +211,9 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
           ticketAnalysis: toJsonValue(state.analysis ?? null),
           priorityClassification: toJsonValue(state.priority ?? null),
           repoSearchResults: toJsonValue(state.repoSearch ?? null),
+          codeContext: toJsonValue(state.codeContext ?? null),
+          fixProposal: toJsonValue(state.fixProposal ?? null),
+          mentorDraft: toJsonValue(state.mentorDraft ?? null),
           error: toJsonValue(state.errors.length > 0 ? state.errors : null)
         }
       });
@@ -187,7 +237,8 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
       }
 
       for (const agentName of agentTypes) {
-        const agent = agents.find((item) => item.type === getAgentType(agentName));
+        const agentType = getAgentType(agentName);
+        const agent = agentType ? agents.find((item) => item.type === agentType) : null;
 
         if (!agent) {
           continue;
@@ -291,6 +342,23 @@ async function findWorkflowOrThrow(id: string) {
 }
 
 export const workflowService = {
+  async list(input: { status?: string; limit?: number } = {}) {
+    const workflows = await prisma.workflowRun.findMany({
+      where: input.status
+        ? {
+            status: input.status.toUpperCase() as DbWorkflowStatus
+          }
+        : undefined,
+      include: workflowInclude,
+      orderBy: {
+        startedAt: "desc"
+      },
+      take: input.limit ?? 50
+    });
+
+    return workflows.map((workflow) => mapWorkflow(workflow));
+  },
+
   async create(input: CreateWorkflowInput) {
     await ensureDefaultAgents();
     const repositoryId =
@@ -372,6 +440,37 @@ export const workflowService = {
   },
 
   async getById(id: string) {
+    return mapWorkflow(await findWorkflowOrThrow(id));
+  },
+
+  async submitForReview(id: string) {
+    const workflow = await findWorkflowOrThrow(id);
+
+    if (workflow.status !== "MENTOR_DRAFT_READY") {
+      throw new AppError(400, "Workflow mentor draft is not ready for review submission");
+    }
+
+    await prisma.$transaction([
+      prisma.workflowRun.update({
+        where: { id },
+        data: {
+          status: "WAITING_FOR_REVIEW",
+          currentAgent: null
+        }
+      }),
+      prisma.traceLog.create({
+        data: {
+          workflowRunId: id,
+          level: "INFO",
+          message: "Developer submitted mentor draft for review",
+          metadata: {
+            previousStatus: workflow.status,
+            nextStatus: "WAITING_FOR_REVIEW"
+          }
+        }
+      })
+    ]);
+
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
