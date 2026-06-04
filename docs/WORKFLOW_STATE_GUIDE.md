@@ -18,7 +18,7 @@ type WorkflowStatus =
   | "failed";
 ```
 
-Final state sau khi AI chạy xong nên là `waiting_for_review`, không phải `completed_fix`.
+Final state sau khi AI chạy xong nên là `mentor_draft_ready`. Sau khi Developer confirm gửi Mentor thì state chuyển thành `waiting_for_review`, không phải `completed_fix`.
 
 ## Schema Gợi Ý
 

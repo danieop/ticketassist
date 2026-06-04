@@ -5,6 +5,10 @@ export const workflowStatusSchema = z.enum([
   "ticket_analyzed",
   "priority_classified",
   "repo_searched",
+  "code_context_ready",
+  "fix_proposed",
+  "mentor_draft_ready",
+  "waiting_for_review",
   "failed"
 ]);
 
@@ -64,12 +68,50 @@ export const repoSearchSchema = z.object({
   warnings: z.array(z.string()).optional()
 });
 
+export const codeContextFileSchema = z.object({
+  filePath: z.string(),
+  startLine: z.number().int().optional(),
+  endLine: z.number().int().optional(),
+  relevanceScore: z.number(),
+  reason: z.string(),
+  matchedTerms: z.array(z.string()).optional(),
+  excerpt: z.string().optional(),
+  riskNotes: z.array(z.string()).optional()
+});
+
+export const codeContextSchema = z.object({
+  summary: z.string().min(1),
+  relevantFiles: z.array(codeContextFileSchema),
+  riskNotes: z.array(z.string()),
+  generatedAt: z.string()
+});
+
+export const fixProposalSchema = z.object({
+  title: z.string().min(1),
+  hypotheses: z.array(z.string()),
+  recommendedApproach: z.string().min(1),
+  steps: z.array(z.string()),
+  risks: z.array(z.string()),
+  verificationSteps: z.array(z.string()),
+  confidence: z.number().min(0).max(1)
+});
+
+export const mentorDraftSchema = z.object({
+  response: z.string().min(1),
+  checklist: z.array(z.string()),
+  internalNotes: z.array(z.string()).optional(),
+  generatedAt: z.string()
+});
+
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
 export type RetrievalStrategy = z.infer<typeof retrievalStrategySchema>;
 export type TicketAnalysis = z.infer<typeof ticketAnalysisSchema>;
 export type PriorityClassification = z.infer<typeof priorityClassificationSchema>;
 export type RepoSearchResult = z.infer<typeof repoSearchResultSchema>;
 export type RepoSearch = z.infer<typeof repoSearchSchema>;
+export type CodeContext = z.infer<typeof codeContextSchema>;
+export type FixProposal = z.infer<typeof fixProposalSchema>;
+export type MentorDraft = z.infer<typeof mentorDraftSchema>;
 
 export type WorkflowError = {
   agent: string;
@@ -106,6 +148,9 @@ export type TicketWorkflowState = {
   analysis?: TicketAnalysis;
   priority?: PriorityClassification;
   repoSearch?: RepoSearch;
+  codeContext?: CodeContext;
+  fixProposal?: FixProposal;
+  mentorDraft?: MentorDraft;
   errors: WorkflowError[];
   trace: WorkflowTraceEntry[];
   createdAt: string;
