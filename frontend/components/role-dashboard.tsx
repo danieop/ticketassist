@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation"; // Dùng next/navigation cho App Router
 
@@ -148,14 +149,18 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
           <h1>{dashboard.title}</h1>
           <p>{dashboard.description}</p>
         </div>
-        {/* Đổi thẻ <a> thành thẻ <button> và gắn sự kiện onClick */}
-        <button 
-          className="secondary-action" 
-          onClick={handleSwitchAccount}
-          style={{ cursor: "pointer" }} // Đảm bảo UI vẫn trông giống nút bấm
-        >
-          Switch account
-        </button>
+        <div className="topbar-actions">
+          <Link className="secondary-action" href="/tickets">
+            Tickets
+          </Link>
+          <button 
+            className="secondary-action" 
+            onClick={handleSwitchAccount}
+            style={{ cursor: "pointer" }}
+          >
+            Switch account
+          </button>
+        </div>
       </header>
 
       <section className="metrics-row" aria-label={`${dashboard.eyebrow} metrics`}>

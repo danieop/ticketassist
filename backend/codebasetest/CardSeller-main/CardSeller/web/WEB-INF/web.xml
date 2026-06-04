@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app version="6.0" xmlns="https://jakarta.ee/xml/ns/jakartaee" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd">
+
+    <!-- Existing Servlet Configurations -->
+    <servlet-mapping>
+        <servlet-name>QueueStartUp</servlet-name>
+        <url-pattern>/queuestartup</url-pattern>
+    </servlet-mapping>
+    <welcome-file-list>
+        <welcome-file>home</welcome-file>
+    </welcome-file-list>
+    <servlet>
+        <servlet-name>StickyCaptcha</servlet-name>
+        <servlet-class>nl.captcha.servlet.SimpleCaptchaServlet</servlet-class>
+        <init-param>
+            <param-name>width</param-name>
+            <param-value>250</param-value>
+        </init-param>
+        <init-param>
+            <param-name>height</param-name>
+            <param-value>75</param-value>
+        </init-param>
+    </servlet>
+    <servlet>
+        <servlet-name>ForgotPassword</servlet-name>
+        <servlet-class>controller.ForgotPassword</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>Home</servlet-name>
+        <servlet-class>controller.Home</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>Cart</servlet-name>
+        <servlet-class>controller.Cart</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>CheckOutController</servlet-name>
+        <servlet-class>controller.CheckOutController</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>ManageDiscount</servlet-name>
+        <servlet-class>controller.ManageDiscount</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>QueueStartUp</servlet-name>
+        <servlet-class>controller.QueueStartUp</servlet-class>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>StickyCaptcha</servlet-name>
+        <url-pattern>/captcha</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>ForgotPassword</servlet-name>
+        <url-pattern>/forgot-password</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>Home</servlet-name>
+        <url-pattern>/home</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>Cart</servlet-name>
+        <url-pattern>/cart</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>CheckOutController</servlet-name>
+        <url-pattern>/CheckOutController</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>ManageDiscount</servlet-name>
+        <url-pattern>/manageDiscount</url-pattern>
+    </servlet-mapping>
+    <servlet>
+        <servlet-name>AddDiscount</servlet-name>
+        <servlet-class>controller.AddDiscount</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>AddDiscount</servlet-name>
+        <url-pattern>/addDiscount</url-pattern>
+    </servlet-mapping>
+    <servlet>
+        <servlet-name>OrderItem</servlet-name>
+        <servlet-class>controller.OrderItem</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>OrderItem</servlet-name>
+        <url-pattern>/historyOrder</url-pattern>
+    </servlet-mapping>
+    <servlet>
+    <servlet-name>TopCardServlet</servlet-name>
+    <servlet-class>controller.TopCardServlet</servlet-class>
+</servlet>
+
+<servlet-mapping>
+    <servlet-name>TopCardServlet</servlet-name>
+    <url-pattern>/topCards</url-pattern>
+</servlet-mapping>
+<servlet>
+        <servlet-name>newsServlet</servlet-name>
+        <servlet-class>controller.NewsServlet</servlet-class>
+    </servlet>
+
+    <servlet-mapping>
+        <servlet-name>newsServlet</servlet-name>
+        <url-pattern>/news</url-pattern>
+    </servlet-mapping>
+
+
+</web-app>

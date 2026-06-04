@@ -877,6 +877,193 @@ button {
   min-width: 0;
 }
 
+.ticket-shell {
+  width: min(100%, 1320px);
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.ticket-management {
+  display: grid;
+  gap: 18px;
+}
+
+.ticket-management-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ticket-management-toolbar h2 {
+  margin: 5px 0 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.ticket-toolbar-actions,
+.ticket-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.ticket-crud-grid {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.ticket-crud-sidebar,
+.ticket-editor-panel {
+  min-width: 0;
+}
+
+.ticket-filter-form,
+.ticket-editor-form {
+  display: grid;
+  gap: 14px;
+}
+
+.ticket-filter-form {
+  margin-bottom: 18px;
+}
+
+.ticket-filter-form label,
+.ticket-editor-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.ticket-filter-form input,
+.ticket-filter-form select,
+.ticket-editor-form input,
+.ticket-editor-form textarea,
+.ticket-editor-form select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcff;
+  color: var(--text);
+}
+
+.ticket-filter-form input,
+.ticket-filter-form select,
+.ticket-editor-form input,
+.ticket-editor-form select {
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.ticket-editor-form textarea {
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.ticket-filter-form input:focus,
+.ticket-filter-form select:focus,
+.ticket-editor-form input:focus,
+.ticket-editor-form textarea:focus,
+.ticket-editor-form select:focus {
+  border-color: var(--blue);
+  outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.ticket-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-list-item {
+  min-width: 0;
+}
+
+.ticket-list-item button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+  color: var(--text);
+  text-align: left;
+}
+
+.ticket-list-item-active button,
+.ticket-list-item button:hover {
+  border-color: #9bb8f4;
+  background: var(--surface-soft);
+}
+
+.ticket-list-item span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.ticket-list-item strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ticket-list-item small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ticket-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 14px;
+}
+
+.ticket-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 0;
+}
+
+.ticket-detail-meta div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcff;
+}
+
+.ticket-detail-meta dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ticket-detail-meta dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.danger-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid #f2b8a2;
+  border-radius: 8px;
+  padding: 0 16px;
+  background: #fff1ed;
+  color: var(--red);
+  font-weight: 800;
+}
+
 .repository-toolbar {
   display: flex;
   align-items: flex-start;
@@ -1095,7 +1282,8 @@ button {
   }
 
   .codebase-grid,
-  .github-browser {
+  .github-browser,
+  .ticket-crud-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1117,6 +1305,7 @@ button {
   .topbar,
   .role-header,
   .codebase-header,
+  .ticket-management-toolbar,
   .repository-toolbar,
   .row-heading {
     align-items: stretch;
@@ -1136,6 +1325,8 @@ button {
   .metrics-row,
   .codebase-metrics,
   .ticket-meta,
+  .ticket-detail-meta,
+  .ticket-form-row,
   .analysis-grid,
   .review-grid,
   .side-column {
@@ -1153,6 +1344,7 @@ button {
   }
 
   .codebase-shell,
+  .ticket-shell,
   .role-shell {
     padding: 12px;
   }
