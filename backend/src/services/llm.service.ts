@@ -43,13 +43,15 @@ export async function callJsonChat(input: {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
+  timeoutMs?: number;
 }) {
   if (!env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeoutMs = input.timeoutMs ?? 60000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
 
   try {
@@ -70,7 +72,7 @@ export async function callJsonChat(input: {
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("LLM provider timed out after 25 seconds");
+      throw new Error(`LLM provider timed out after ${Math.round(timeoutMs / 1000)} seconds`);
     }
 
     throw error;

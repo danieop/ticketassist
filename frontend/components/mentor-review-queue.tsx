@@ -20,6 +20,21 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
 }
 
+function getStoredMentorId() {
+  try {
+    const rawUser = localStorage.getItem("ticketassist_user");
+
+    if (!rawUser) {
+      return undefined;
+    }
+
+    const user = JSON.parse(rawUser) as { id?: string; role?: string };
+    return user.role === "MENTOR" ? user.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function MentorReviewQueue() {
   const [workflows, setWorkflows] = useState<WorkflowApi[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
@@ -78,7 +93,8 @@ export function MentorReviewQueue() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           decision,
-          comment: comment.trim()
+          comment: comment.trim(),
+          mentorId: getStoredMentorId()
         })
       });
 
