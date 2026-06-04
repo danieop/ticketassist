@@ -1,6 +1,7 @@
 import type { Prisma, Ticket } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
+import { repositoryService } from "./repository.service.js";
 import type {
   CreateTicketInput,
   ListTicketsInput,
@@ -25,6 +26,14 @@ const ticketInclude = {
     select: {
       id: true,
       status: true,
+      repository: {
+        select: {
+          id: true,
+          name: true,
+          rootPath: true,
+          status: true
+        }
+      },
       startedAt: true,
       finishedAt: true
     },
@@ -49,6 +58,12 @@ function toTicketResponse(
     workflowRuns?: {
       id: string;
       status: string;
+      repository: {
+        id: string;
+        name: string;
+        rootPath: string;
+        status: string;
+      } | null;
       startedAt: Date;
       finishedAt: Date | null;
     }[];
@@ -153,16 +168,32 @@ export const ticketService = {
 
   async create(input: CreateTicketInput) {
     await ensureReporterExists(input.reporterId);
+    const repository = await repositoryService.ensureDefaultCodebaseRepository();
 
-    const ticket = await prisma.ticket.create({
-      data: {
-        title: input.title,
-        description: input.description,
-        reporterName: input.reporterName,
-        source: input.source,
-        reporterId: input.reporterId
-      },
-      include: ticketInclude
+    const ticket = await prisma.$transaction(async (tx) => {
+      const createdTicket = await tx.ticket.create({
+        data: {
+          title: input.title,
+          description: input.description,
+          reporterName: input.reporterName,
+          source: input.source,
+          reporterId: input.reporterId
+        }
+      });
+
+      await tx.workflowRun.create({
+        data: {
+          ticketId: createdTicket.id,
+          repositoryId: repository.id,
+          status: "CREATED",
+          currentAgent: "CardSeller codebase"
+        }
+      });
+
+      return tx.ticket.findUniqueOrThrow({
+        where: { id: createdTicket.id },
+        include: ticketInclude
+      });
     });
 
     return toTicketResponse(ticket);
@@ -195,5 +226,43 @@ export const ticketService = {
     await prisma.ticket.delete({ where: { id } });
 
     return { id };
+  },
+
+  async routeAllToDefaultCodebase() {
+    const repository = await repositoryService.ensureDefaultCodebaseRepository();
+
+    await prisma.workflowRun.updateMany({
+      where: {
+        OR: [{ repositoryId: null }, { repositoryId: { not: repository.id } }]
+      },
+      data: {
+        repositoryId: repository.id
+      }
+    });
+
+    const unroutedTickets = await prisma.ticket.findMany({
+      where: {
+        workflowRuns: {
+          none: {}
+        }
+      },
+      select: { id: true }
+    });
+
+    for (const ticket of unroutedTickets) {
+      await prisma.workflowRun.create({
+        data: {
+          ticketId: ticket.id,
+          repositoryId: repository.id,
+          status: "CREATED",
+          currentAgent: "CardSeller codebase"
+        }
+      });
+    }
+
+    return {
+      repositoryId: repository.id,
+      routedTickets: unroutedTickets.length
+    };
   }
 };
