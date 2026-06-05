@@ -163,7 +163,7 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
         </div>
       </header>
 
-      <section className="metrics-row" aria-label={`${dashboard.eyebrow} metrics`}>
+      {/* <section className="metrics-row" aria-label={`${dashboard.eyebrow} metrics`}>
         {dashboard.metrics.map((metric) => (
           <article
             className={`metric-card ${"tone" in metric ? `metric-${metric.tone}` : ""}`}
@@ -173,9 +173,9 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
             <strong>{metric.value}</strong>
           </article>
         ))}
-      </section>
+      </section> */}
 
-      <section className="role-grid">
+      {/* <section className="role-grid">
         <div className="panel">
           <div className="panel-heading">
             <p className="eyebrow">{dashboard.primaryTitle}</p>
@@ -203,7 +203,7 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
             ))}
           </ul>
         </aside>
-      </section>
+      </section> */}
 
       {children}
     </main>

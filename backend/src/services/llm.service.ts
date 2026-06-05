@@ -50,7 +50,7 @@ export async function callJsonChat(input: {
   }
 
   const controller = new AbortController();
-  const timeoutMs = input.timeoutMs ?? 60000;
+  const timeoutMs = input.timeoutMs ?? 180000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
 

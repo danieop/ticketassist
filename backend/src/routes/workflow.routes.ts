@@ -3,6 +3,8 @@ import {
   createWorkflow,
   getWorkflow,
   listWorkflows,
+  acceptWorkflowAgent,
+  rerunWorkflowAgent,
   submitWorkflowForReview,
   reviewWorkflow
 } from "../controllers/workflow.controller.js";
@@ -49,6 +51,8 @@ workflowRouter.get("/", listWorkflows);
  *         description: Workflow not found
  */
 workflowRouter.get("/:id", getWorkflow);
+workflowRouter.post("/:id/accept", acceptWorkflowAgent);
+workflowRouter.post("/:id/rerun", rerunWorkflowAgent);
 workflowRouter.post("/:id/submit", submitWorkflowForReview);
 
 /**

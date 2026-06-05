@@ -168,7 +168,6 @@ export const ticketService = {
 
   async create(input: CreateTicketInput) {
     await ensureReporterExists(input.reporterId);
-    const repository = await repositoryService.ensureDefaultCodebaseRepository();
 
     const ticket = await prisma.$transaction(async (tx) => {
       const createdTicket = await tx.ticket.create({
@@ -178,15 +177,6 @@ export const ticketService = {
           reporterName: input.reporterName,
           source: input.source,
           reporterId: input.reporterId
-        }
-      });
-
-      await tx.workflowRun.create({
-        data: {
-          ticketId: createdTicket.id,
-          repositoryId: repository.id,
-          status: "CREATED",
-          currentAgent: "CardSeller codebase"
         }
       });
 

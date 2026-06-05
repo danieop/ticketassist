@@ -1,9 +1,6 @@
 import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { prisma } from "./config/prisma.js";
-import { ticketService } from "./services/ticket.service.js";
-
-await ticketService.routeAllToDefaultCodebase();
 
 const app = createApp();
 

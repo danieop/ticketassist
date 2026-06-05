@@ -82,7 +82,7 @@ function getSftpConfig() {
     port: env.SFTP_PORT,
     username: env.SFTP_USERNAME,
     password: env.SFTP_PASSWORD,
-    readyTimeout: 20000
+    readyTimeout: 100000
   };
 }
 
@@ -333,12 +333,18 @@ async function findRepositoryOrThrow(id: string) {
 
 export const repositoryService = {
   async ensureDefaultCodebaseRepository() {
-    const localCodebase = await collectLocalCodebaseFiles(env.DEFAULT_CODEBASE_PATH);
+    const defaultRootPath = path.resolve(env.DEFAULT_CODEBASE_PATH);
+    const existingRepository = await prisma.codeRepository.findFirst({
+      where: { rootPath: defaultRootPath }
+    });
+
+    if (existingRepository?.status === "READY" && existingRepository.fileCount > 0) {
+      return toRepositoryResponse(await findRepositoryOrThrow(existingRepository.id));
+    }
+
+    const localCodebase = await collectLocalCodebaseFiles(defaultRootPath);
     const repositoryName = path.basename(localCodebase.rootPath) || "Default codebase";
     const totalBytes = localCodebase.files.reduce((sum, file) => sum + file.sizeBytes, 0n);
-    const existingRepository = await prisma.codeRepository.findFirst({
-      where: { rootPath: localCodebase.rootPath }
-    });
 
     const repository =
       existingRepository ??
@@ -379,7 +385,10 @@ export const repositoryService = {
           }
         })
       ],
-      { timeout: repositoryRefreshTransactionTimeoutMs }
+      {
+        maxWait: repositoryRefreshTransactionTimeoutMs,
+        timeout: repositoryRefreshTransactionTimeoutMs
+      }
     );
 
     return toRepositoryResponse(await findRepositoryOrThrow(repository.id));
@@ -431,7 +440,10 @@ export const repositoryService = {
             }
           })
         ],
-        { timeout: repositoryRefreshTransactionTimeoutMs }
+        {
+          maxWait: repositoryRefreshTransactionTimeoutMs,
+          timeout: repositoryRefreshTransactionTimeoutMs
+        }
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Repository upload failed";

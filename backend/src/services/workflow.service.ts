@@ -3,7 +3,12 @@ import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
 import { repositoryService } from "./repository.service.js";
-import { runTicketWorkflow } from "./workflow.graph.js";
+import {
+  getNextWorkflowAgent,
+  rerunCompletedWorkflowAgent,
+  runNextWorkflowAgent,
+  workflowAgentSequence
+} from "./workflow.graph.js";
 import type { TicketWorkflowState, WorkflowStatus } from "./workflow-state.js";
 import { nowIso } from "./workflow-state.js";
 import type {
@@ -189,9 +194,133 @@ function getAgentOutputSnapshot(state: TicketWorkflowState, agentName: string) {
   return null;
 }
 
+function getAgentStatusFromState(state: TicketWorkflowState, agentName: string) {
+  const failedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "failed");
+  const completedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "completed");
+
+  if (failedTrace) {
+    return "FAILED" as const;
+  }
+
+  if (completedTrace) {
+    return "SUCCESS" as const;
+  }
+
+  return "RUNNING" as const;
+}
+
+function getWorkflowProgress(status: WorkflowStatus) {
+  const completedIndex = workflowAgentSequence.findIndex((agent) => agent.completedStatus === status);
+  const completedCount = completedIndex >= 0 ? completedIndex + 1 : 0;
+
+  return {
+    completedAgentCount: status === "failed" ? 0 : completedCount,
+    totalAgentCount: workflowAgentSequence.length,
+    percent: Math.round((completedCount / workflowAgentSequence.length) * 100)
+  };
+}
+
+function getNextAgentSummary(status: WorkflowStatus) {
+  const nextAgent = getNextWorkflowAgent(status);
+
+  if (!nextAgent) {
+    return null;
+  }
+
+  return {
+    name: nextAgent.name,
+    type: nextAgent.type
+  };
+}
+
+function getStoredTrace(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) {
+  return workflow.traceLogs.map((trace) => {
+    const metadata = trace.metadata as {
+      inputSummary?: string;
+      outputSummary?: string;
+      inputPayload?: unknown;
+      handoffPayload?: unknown;
+      promptPreview?: string;
+      status?: "started" | "completed" | "failed";
+      agent?: string;
+      action?: string;
+    } | null;
+
+    const [agentFallback, ...actionParts] = trace.message.split(": ");
+
+    return {
+      agent: metadata?.agent ?? agentFallback,
+      action: metadata?.action ?? actionParts.join(": "),
+      status: metadata?.status ?? (trace.level === "ERROR" ? "failed" : "completed"),
+      inputSummary: metadata?.inputSummary,
+      outputSummary: metadata?.outputSummary,
+      inputPayload: metadata?.inputPayload,
+      handoffPayload: metadata?.handoffPayload,
+      promptPreview: metadata?.promptPreview,
+      createdAt: trace.createdAt.toISOString()
+    };
+  });
+}
+
+function rebuildWorkflowState(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>): TicketWorkflowState {
+  const state = workflow.state;
+
+  if (!state) {
+    throw new AppError(400, "Workflow state is missing");
+  }
+
+  const inputTicket = state.inputTicket as {
+    ticket?: TicketWorkflowState["ticket"];
+    repoConfig?: TicketWorkflowState["repoConfig"];
+    title?: string;
+    description?: string;
+    metadata?: Record<string, unknown>;
+  };
+  const ticket = inputTicket.ticket ?? {
+    title: workflow.ticket.title,
+    description: workflow.ticket.description,
+    metadata: {
+      reporterName: workflow.ticket.reporterName,
+      source: workflow.ticket.source,
+      reporterId: workflow.ticket.reporterId
+    }
+  };
+
+  if (!inputTicket.repoConfig && !workflow.repository) {
+    throw new AppError(400, "Workflow repository configuration is missing");
+  }
+
+  return {
+    id: workflow.id,
+    status: toApiStatus(workflow.status) as WorkflowStatus,
+    ticket,
+    repoConfig:
+      inputTicket.repoConfig ?? {
+        repositoryId: workflow.repositoryId ?? workflow.repository?.id ?? "",
+        repoPath: workflow.repository?.rootPath ?? "",
+        maxResults: 10,
+        retrievalStrategy: "hybrid",
+        indexName: env.REPO_INDEX_NAME,
+        forceReindex: false
+      },
+    analysis: (state.ticketAnalysis as TicketWorkflowState["analysis"]) ?? undefined,
+    priority: (state.priorityClassification as TicketWorkflowState["priority"]) ?? undefined,
+    repoSearch: (state.repoSearchResults as TicketWorkflowState["repoSearch"]) ?? undefined,
+    codeContext: (state.codeContext as TicketWorkflowState["codeContext"]) ?? undefined,
+    fixProposal: (state.fixProposal as TicketWorkflowState["fixProposal"]) ?? undefined,
+    mentorDraft: (state.mentorDraft as TicketWorkflowState["mentorDraft"]) ?? undefined,
+    errors: Array.isArray(state.error) ? (state.error as TicketWorkflowState["errors"]) : [],
+    trace: getStoredTrace(workflow),
+    createdAt: workflow.startedAt.toISOString(),
+    updatedAt: state.updatedAt.toISOString()
+  };
+}
+
 async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkflowState) {
   const agents = await ensureDefaultAgents();
   const agentTypes = getExecutedAgentTypes(state);
+  const nextAgent = getNextWorkflowAgent(state.status);
+  const isTerminal = state.status === "mentor_draft_ready" || state.status === "failed";
 
   await prisma.$transaction(
     async (tx) => {
@@ -199,8 +328,8 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
         where: { id: workflowRunId },
         data: {
           status: dbStatusByWorkflowStatus[state.status],
-          currentAgent: null,
-          finishedAt: new Date()
+          currentAgent: state.status === "failed" ? null : nextAgent?.name ?? null,
+          finishedAt: isTerminal ? new Date() : null
         }
       });
 
@@ -216,6 +345,14 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
           mentorDraft: toJsonValue(state.mentorDraft ?? null),
           error: toJsonValue(state.errors.length > 0 ? state.errors : null)
         }
+      });
+
+      await tx.traceLog.deleteMany({
+        where: { workflowRunId }
+      });
+
+      await tx.agentRun.deleteMany({
+        where: { workflowRunId }
       });
 
       await tx.repoSearchResult.deleteMany({
@@ -247,7 +384,7 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
         const failedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "failed");
         const completedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "completed");
         const startedTrace = state.trace.find((entry) => entry.agent === agentName && entry.status === "started");
-        const status = failedTrace ? "FAILED" : completedTrace ? "SUCCESS" : "RUNNING";
+        const status = getAgentStatusFromState(state, agentName);
 
         const agentRun = await tx.agentRun.create({
           data: {
@@ -274,8 +411,13 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
               level: trace.status === "failed" ? "ERROR" : "INFO",
               message: `${trace.agent}: ${trace.action} ${trace.status}`,
               metadata: toJsonValue({
+                agent: trace.agent,
+                action: trace.action,
                 inputSummary: trace.inputSummary,
                 outputSummary: trace.outputSummary,
+                inputPayload: trace.inputPayload,
+                handoffPayload: trace.handoffPayload,
+                promptPreview: trace.promptPreview,
                 status: trace.status
               }),
               createdAt: new Date(trace.createdAt)
@@ -285,18 +427,29 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
       }
     },
     {
-      timeout: 20000
+      timeout: 100000
     }
   );
 }
 
 function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) {
+  const apiStatus = toApiStatus(workflow.status) as WorkflowStatus;
+  const progress = getWorkflowProgress(apiStatus);
+  const nextAgent = getNextAgentSummary(apiStatus);
+
   return {
     id: workflow.id,
-    status: toApiStatus(workflow.status),
+    status: apiStatus,
     startedAt: workflow.startedAt,
     finishedAt: workflow.finishedAt,
     currentAgent: workflow.currentAgent,
+    progress,
+    nextAgent,
+    requiresDeveloperDecision:
+      workflow.status !== "FAILED" &&
+      workflow.status !== "WAITING_FOR_REVIEW" &&
+      workflow.status !== "REVIEWED" &&
+      progress.completedAgentCount > 0,
     ticket: workflow.ticket,
     repository: workflow.repository
       ? {
@@ -399,7 +552,25 @@ export const workflowService = {
       await tx.workflowState.create({
         data: {
           workflowRunId: run.id,
-          inputTicket: input.ticket
+          inputTicket: {
+            ticket: {
+              title: ticket.title,
+              description: ticket.description,
+              metadata: {
+                reporterName: ticket.reporterName,
+                source: ticket.source,
+                reporterId: ticket.reporterId
+              }
+            },
+            repoConfig: {
+              repositoryId,
+              repoPath: repository.rootPath,
+              maxResults: input.maxResults,
+              retrievalStrategy: input.retrievalStrategy,
+              indexName: input.indexName ?? env.REPO_INDEX_NAME,
+              forceReindex: input.forceReindex
+            }
+          }
         }
       });
 
@@ -433,13 +604,52 @@ export const workflowService = {
       updatedAt: timestamp
     };
 
-    const finalState = await runTicketWorkflow(initialState);
-    await persistWorkflowOutcome(created.run.id, finalState);
+    const nextState = await runNextWorkflowAgent(initialState);
+    await persistWorkflowOutcome(created.run.id, nextState);
 
     return mapWorkflow(await findWorkflowOrThrow(created.run.id));
   },
 
   async getById(id: string) {
+    return mapWorkflow(await findWorkflowOrThrow(id));
+  },
+
+  async acceptAgent(id: string) {
+    const workflow = await findWorkflowOrThrow(id);
+    const state = rebuildWorkflowState(workflow);
+
+    if (state.status === "failed") {
+      throw new AppError(400, "Failed workflow cannot continue until the failing agent is rerun");
+    }
+
+    if (state.status === "mentor_draft_ready") {
+      throw new AppError(400, "All agents are complete. Submit the mentor draft for review instead.");
+    }
+
+    if (!getNextWorkflowAgent(state.status)) {
+      throw new AppError(400, "No next agent is available for the current workflow status");
+    }
+
+    const nextState = await runNextWorkflowAgent(state);
+    await persistWorkflowOutcome(id, nextState);
+
+    return mapWorkflow(await findWorkflowOrThrow(id));
+  },
+
+  async rerunAgent(id: string) {
+    const workflow = await findWorkflowOrThrow(id);
+    const state = rebuildWorkflowState(workflow);
+
+    if (state.status === "created") {
+      const nextState = await runNextWorkflowAgent(state);
+      await persistWorkflowOutcome(id, nextState);
+
+      return mapWorkflow(await findWorkflowOrThrow(id));
+    }
+
+    const nextState = await rerunCompletedWorkflowAgent(state);
+    await persistWorkflowOutcome(id, nextState);
+
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
