@@ -33,9 +33,8 @@ function summarizeText(text: string, maxLength = 220) {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
-function compactJson(value: unknown, maxLength = 1400) {
-  const formatted = JSON.stringify(value, null, 2);
-  return formatted.length > maxLength ? `${formatted.slice(0, maxLength)}\n\n...truncated for trace preview` : formatted;
+function compactJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
 }
 
 function getAgentInputPayload(agentName: string, state: TicketWorkflowState) {

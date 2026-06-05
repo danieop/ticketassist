@@ -43,7 +43,7 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
 }
 
-function stringifySnapshot(value: unknown, maxLength = 6000) {
+function stringifySnapshot(value: unknown, maxLength = 10000) {
   if (value === null || value === undefined) {
     return "Not available";
   }
@@ -102,7 +102,7 @@ function highlightCodeLine(line: string) {
 }
 
 function AgentCodeBlock({ title, value }: { title: string; value: unknown }) {
-  const code = stringifySnapshot(value);
+  const code = stringifySnapshot(value, Number.POSITIVE_INFINITY);
   const lines = code.split("\n");
 
   return (
