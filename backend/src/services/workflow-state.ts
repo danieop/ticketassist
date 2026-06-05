@@ -134,6 +134,9 @@ export type WorkflowTraceEntry = {
   status: "started" | "completed" | "failed";
   inputSummary?: string;
   outputSummary?: string;
+  inputPayload?: unknown;
+  handoffPayload?: unknown;
+  promptPreview?: string;
   createdAt: string;
 };
 

@@ -33,6 +33,123 @@ function summarizeText(text: string, maxLength = 220) {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
+function compactJson(value: unknown, maxLength = 1400) {
+  const formatted = JSON.stringify(value, null, 2);
+  return formatted.length > maxLength ? `${formatted.slice(0, maxLength)}\n\n...truncated for trace preview` : formatted;
+}
+
+function getAgentInputPayload(agentName: string, state: TicketWorkflowState) {
+  if (agentName === "TicketAnalyzerAgent") {
+    return {
+      ticket: state.ticket
+    };
+  }
+
+  if (agentName === "PriorityClassifierAgent") {
+    return {
+      ticket: state.ticket,
+      analysis: state.analysis
+    };
+  }
+
+  if (agentName === "RepoSearchAgent") {
+    return {
+      ticket: state.ticket,
+      analysis: state.analysis,
+      priority: state.priority,
+      repository: {
+        repositoryId: state.repoConfig.repositoryId,
+        strategy: state.repoConfig.retrievalStrategy,
+        maxResults: state.repoConfig.maxResults
+      }
+    };
+  }
+
+  if (agentName === "CodeContextAgent") {
+    return {
+      ticket: state.ticket,
+      analysis: state.analysis,
+      priority: state.priority,
+      repoSearch: {
+        queryTerms: state.repoSearch?.queryTerms,
+        semanticQuery: state.repoSearch?.semanticQuery,
+        resultCount: state.repoSearch?.results.length,
+        topResults: getTopSearchResults(state, 5)
+      }
+    };
+  }
+
+  if (agentName === "FixProposalAgent") {
+    return {
+      ticket: state.ticket,
+      analysis: state.analysis,
+      priority: state.priority,
+      codeContext: state.codeContext
+    };
+  }
+
+  return {
+    ticket: state.ticket,
+    analysis: state.analysis,
+    priority: state.priority,
+    repoSearchSummary: {
+      queryTerms: state.repoSearch?.queryTerms,
+      resultCount: state.repoSearch?.results.length
+    },
+    codeContext: state.codeContext,
+    fixProposal: state.fixProposal
+  };
+}
+
+function getAgentPromptPreview(agentName: string, state: TicketWorkflowState) {
+  const input = getAgentInputPayload(agentName, state);
+
+  if (agentName === "TicketAnalyzerAgent") {
+    return compactJson({
+      system:
+        "You are TicketAnalyzerAgent. Analyze only the bug ticket. Do not classify priority. Do not search code. Return JSON only with keys: summary, keyFacts, affectedFeature, suspectedFlow, missingInfo.",
+      user: input
+    });
+  }
+
+  if (agentName === "PriorityClassifierAgent") {
+    return compactJson({
+      system:
+        "You are PriorityClassifierAgent. Classify only ticket priority from the ticket and prior analysis. Do not search code. Return JSON only with keys: level, reason, confidence, severity, businessImpact.",
+      user: input
+    });
+  }
+
+  if (agentName === "RepoSearchAgent") {
+    return compactJson({
+      system: "Generate focused repository query terms and semantic search query from ticket analysis and priority.",
+      user: input
+    });
+  }
+
+  if (agentName === "CodeContextAgent") {
+    return compactJson({
+      system:
+        "You are CodeContextAgent. Select the most relevant repository search results for mentor review. Do not propose a code fix. Return JSON only with keys: summary, relevantFiles, riskNotes, generatedAt.",
+      user: input
+    });
+  }
+
+  if (agentName === "FixProposalAgent") {
+    return compactJson({
+      system:
+        "You are FixProposalAgent. Propose a constrained implementation approach for mentor review. Do not claim code was changed. Return JSON only with keys: title, hypotheses, recommendedApproach, steps, risks, verificationSteps, confidence.",
+      user: input
+    });
+  }
+
+  return compactJson({
+    system:
+      "You are MentorDraftAgent. Draft a concise mentor-review note using workflow outputs. Do not say the code is fixed. Do not send a customer response. Return JSON only with keys: response, checklist, internalNotes, generatedAt.",
+    user: input
+  });
+}
+
 function splitFacts(description: string) {
   const sentences = description
     .split(/[.!?\n]+/)
@@ -298,7 +415,7 @@ function deterministicCodeContext(state: TicketWorkflowState): CodeContext {
 async function buildCodeContextWithLlm(state: TicketWorkflowState): Promise<CodeContext> {
   const result = await callJsonChat({
     model: env.AI_MODEL_CODE_CONTEXT,
-    timeoutMs: 60000,
+    timeoutMs: 180000,
     messages: [
       {
         role: "system",
@@ -384,7 +501,7 @@ function deterministicFixProposal(state: TicketWorkflowState): FixProposal {
 async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixProposal> {
   const result = await callJsonChat({
     model: env.AI_MODEL_FIX_PROPOSAL,
-    timeoutMs: 60000,
+    timeoutMs: 180000,
     messages: [
       {
         role: "system",
@@ -445,7 +562,7 @@ function deterministicMentorDraft(state: TicketWorkflowState): MentorDraft {
 async function buildMentorDraftWithLlm(state: TicketWorkflowState): Promise<MentorDraft> {
   const result = await callJsonChat({
     model: env.AI_MODEL_MENTOR_DRAFT,
-    timeoutMs: 60000,
+    timeoutMs: 180000,
     messages: [
       {
         role: "system",
@@ -483,7 +600,9 @@ async function ticketAnalyzerNode(input: GraphInput): Promise<GraphInput> {
     agent: "TicketAnalyzerAgent",
     action: "Analyze incoming bug ticket",
     status: "started",
-    inputSummary: summarizeText(input.state.ticket.description)
+    inputSummary: summarizeText(input.state.ticket.description),
+    inputPayload: getAgentInputPayload("TicketAnalyzerAgent", input.state),
+    promptPreview: getAgentPromptPreview("TicketAnalyzerAgent", input.state)
   });
 
   try {
@@ -519,7 +638,8 @@ async function ticketAnalyzerNode(input: GraphInput): Promise<GraphInput> {
         agent: "TicketAnalyzerAgent",
         action: "Stored ticket analysis",
         status: "completed",
-        outputSummary
+        outputSummary,
+        handoffPayload: analysis
       }
     );
 
@@ -548,7 +668,9 @@ async function priorityClassifierNode(input: GraphInput): Promise<GraphInput> {
     agent: "PriorityClassifierAgent",
     action: "Classify ticket priority",
     status: "started",
-    inputSummary: input.state.analysis?.summary
+    inputSummary: input.state.analysis?.summary,
+    inputPayload: getAgentInputPayload("PriorityClassifierAgent", input.state),
+    promptPreview: getAgentPromptPreview("PriorityClassifierAgent", input.state)
   });
 
   try {
@@ -584,7 +706,8 @@ async function priorityClassifierNode(input: GraphInput): Promise<GraphInput> {
         agent: "PriorityClassifierAgent",
         action: "Stored priority classification",
         status: "completed",
-        outputSummary
+        outputSummary,
+        handoffPayload: priority
       }
     );
 
@@ -613,7 +736,9 @@ async function repoSearchNode(input: GraphInput): Promise<GraphInput> {
     agent: "RepoSearchAgent",
     action: "Search repository context",
     status: "started",
-    inputSummary: input.state.analysis?.summary
+    inputSummary: input.state.analysis?.summary,
+    inputPayload: getAgentInputPayload("RepoSearchAgent", input.state),
+    promptPreview: getAgentPromptPreview("RepoSearchAgent", input.state)
   });
 
   try {
@@ -673,7 +798,13 @@ async function repoSearchNode(input: GraphInput): Promise<GraphInput> {
         agent: "RepoSearchAgent",
         action: "Stored repository search results",
         status: "completed",
-        outputSummary: `Found ${repoSearch.results.length} repository result(s)`
+        outputSummary: `Found ${repoSearch.results.length} repository result(s)`,
+        handoffPayload: {
+          queryTerms: repoSearch.queryTerms,
+          semanticQuery: repoSearch.semanticQuery,
+          resultCount: repoSearch.results.length,
+          topResults: repoSearch.results.slice(0, 5)
+        }
       }
     );
 
@@ -702,7 +833,9 @@ async function codeContextNode(input: GraphInput): Promise<GraphInput> {
     agent: "CodeContextAgent",
     action: "Select focused code context",
     status: "started",
-    inputSummary: input.state.repoSearch?.semanticQuery
+    inputSummary: input.state.repoSearch?.semanticQuery,
+    inputPayload: getAgentInputPayload("CodeContextAgent", input.state),
+    promptPreview: getAgentPromptPreview("CodeContextAgent", input.state)
   });
 
   try {
@@ -738,7 +871,8 @@ async function codeContextNode(input: GraphInput): Promise<GraphInput> {
         agent: "CodeContextAgent",
         action: "Stored focused code context",
         status: "completed",
-        outputSummary
+        outputSummary,
+        handoffPayload: codeContext
       }
     );
 
@@ -767,7 +901,9 @@ async function fixProposalNode(input: GraphInput): Promise<GraphInput> {
     agent: "FixProposalAgent",
     action: "Draft fix proposal",
     status: "started",
-    inputSummary: input.state.codeContext?.summary
+    inputSummary: input.state.codeContext?.summary,
+    inputPayload: getAgentInputPayload("FixProposalAgent", input.state),
+    promptPreview: getAgentPromptPreview("FixProposalAgent", input.state)
   });
 
   try {
@@ -803,7 +939,8 @@ async function fixProposalNode(input: GraphInput): Promise<GraphInput> {
         agent: "FixProposalAgent",
         action: "Stored fix proposal",
         status: "completed",
-        outputSummary
+        outputSummary,
+        handoffPayload: fixProposal
       }
     );
 
@@ -832,7 +969,9 @@ async function mentorDraftNode(input: GraphInput): Promise<GraphInput> {
     agent: "MentorDraftAgent",
     action: "Draft mentor review note",
     status: "started",
-    inputSummary: input.state.fixProposal?.title
+    inputSummary: input.state.fixProposal?.title,
+    inputPayload: getAgentInputPayload("MentorDraftAgent", input.state),
+    promptPreview: getAgentPromptPreview("MentorDraftAgent", input.state)
   });
 
   try {
@@ -868,7 +1007,8 @@ async function mentorDraftNode(input: GraphInput): Promise<GraphInput> {
         agent: "MentorDraftAgent",
         action: "Stored mentor draft for developer confirmation",
         status: "completed",
-        outputSummary
+        outputSummary,
+        handoffPayload: mentorDraft
       }
     );
 
@@ -929,5 +1069,92 @@ const compiledWorkflowGraph = new StateGraph(WorkflowAnnotation)
 
 export async function runTicketWorkflow(initialState: TicketWorkflowState) {
   const result = await compiledWorkflowGraph.invoke({ state: initialState });
+  return result.state;
+}
+
+export const workflowAgentSequence = [
+  {
+    name: "TicketAnalyzerAgent",
+    type: "TICKET_ANALYZER",
+    expectedStatus: "created",
+    completedStatus: "ticket_analyzed",
+    node: ticketAnalyzerNode
+  },
+  {
+    name: "PriorityClassifierAgent",
+    type: "PRIORITY_CLASSIFIER",
+    expectedStatus: "ticket_analyzed",
+    completedStatus: "priority_classified",
+    node: priorityClassifierNode
+  },
+  {
+    name: "RepoSearchAgent",
+    type: "REPO_SEARCH",
+    expectedStatus: "priority_classified",
+    completedStatus: "repo_searched",
+    node: repoSearchNode
+  },
+  {
+    name: "CodeContextAgent",
+    type: "CODE_CONTEXT",
+    expectedStatus: "repo_searched",
+    completedStatus: "code_context_ready",
+    node: codeContextNode
+  },
+  {
+    name: "FixProposalAgent",
+    type: "FIX_PROPOSAL",
+    expectedStatus: "code_context_ready",
+    completedStatus: "fix_proposed",
+    node: fixProposalNode
+  },
+  {
+    name: "MentorDraftAgent",
+    type: "MENTOR_DRAFT",
+    expectedStatus: "fix_proposed",
+    completedStatus: "mentor_draft_ready",
+    node: mentorDraftNode
+  }
+] as const;
+
+export type WorkflowAgentType = (typeof workflowAgentSequence)[number]["type"];
+
+export function getNextWorkflowAgent(status: TicketWorkflowState["status"]) {
+  return workflowAgentSequence.find((agent) => agent.expectedStatus === status) ?? null;
+}
+
+export function getAgentForCompletedStatus(status: TicketWorkflowState["status"]) {
+  return workflowAgentSequence.find((agent) => agent.completedStatus === status) ?? null;
+}
+
+export async function runNextWorkflowAgent(state: TicketWorkflowState) {
+  const nextAgent = getNextWorkflowAgent(state.status);
+
+  if (!nextAgent) {
+    throw new Error(`No next agent is available for workflow status ${state.status}`);
+  }
+
+  const result = await nextAgent.node({ state });
+  return result.state;
+}
+
+export async function rerunCompletedWorkflowAgent(state: TicketWorkflowState) {
+  const failedTrace = state.status === "failed" ? [...state.trace].reverse().find((entry) => entry.status === "failed") : null;
+  const agent =
+    failedTrace
+      ? workflowAgentSequence.find((item) => item.name === failedTrace.agent)
+      : getAgentForCompletedStatus(state.status);
+
+  if (!agent) {
+    throw new Error(`No completed agent can be rerun for workflow status ${state.status}`);
+  }
+
+  const rerunState = {
+    ...state,
+    status: agent.expectedStatus,
+    trace: state.trace.filter((entry) => entry.agent !== agent.name),
+    updatedAt: nowIso()
+  };
+  const result = await agent.node({ state: rerunState });
   return result.state;
 }

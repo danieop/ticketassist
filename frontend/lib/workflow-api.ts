@@ -20,6 +20,17 @@ export type WorkflowApi = {
   status: WorkflowStatus;
   startedAt: string;
   finishedAt?: string | null;
+  currentAgent?: string | null;
+  progress?: {
+    completedAgentCount: number;
+    totalAgentCount: number;
+    percent: number;
+  };
+  nextAgent?: {
+    name: string;
+    type: string;
+  } | null;
+  requiresDeveloperDecision?: boolean;
   ticket: {
     id: string;
     title: string;
@@ -98,17 +109,25 @@ export type WorkflowApi = {
       type: string;
       executionOrder: number;
     };
+    inputSnapshot?: unknown;
+    outputSnapshot?: unknown;
     errorMessage?: string | null;
     startedAt: string;
     finishedAt?: string | null;
   }[];
   trace: {
     id: string;
+    agentRunId?: string | null;
     level: "DEBUG" | "INFO" | "WARN" | "ERROR";
     message: string;
     metadata?: {
       outputSummary?: string;
       inputSummary?: string;
+      inputPayload?: unknown;
+      handoffPayload?: unknown;
+      promptPreview?: string;
+      agent?: string;
+      action?: string;
       status?: string;
     } | null;
     createdAt: string;
@@ -147,4 +166,3 @@ export function formatDateTime(value?: string | null) {
     minute: "2-digit"
   }).format(new Date(value));
 }
-

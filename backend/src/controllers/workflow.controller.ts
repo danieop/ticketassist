@@ -48,6 +48,24 @@ export const getWorkflow: RequestHandler = async (request, response, next) => {
   }
 };
 
+export const acceptWorkflowAgent: RequestHandler = async (request, response, next) => {
+  try {
+    const workflow = await workflowService.acceptAgent(getParamId(request.params.id));
+    response.json(workflow);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const rerunWorkflowAgent: RequestHandler = async (request, response, next) => {
+  try {
+    const workflow = await workflowService.rerunAgent(getParamId(request.params.id));
+    response.json(workflow);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const submitWorkflowForReview: RequestHandler = async (request, response, next) => {
   try {
     const workflow = await workflowService.submitForReview(getParamId(request.params.id));
