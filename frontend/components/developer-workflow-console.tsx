@@ -473,6 +473,28 @@ export function DeveloperWorkflowConsole() {
 
   return (
     <section className="workflow-console">
+      <section className="panel recent-workflows-panel">
+        <div className="panel-heading row-heading">
+          <div>
+            <p className="eyebrow">Recent workflows</p>
+            <h2>Developer handoffs</h2>
+          </div>
+          <button className="secondary-action compact-action" onClick={() => void loadRecentWorkflows()} type="button">
+            Refresh
+          </button>
+        </div>
+        <div className="workflow-table">
+          {recentWorkflows.map((item) => (
+            <button className="workflow-row" key={item.id} onClick={() => setWorkflow(item)} type="button">
+              <span>{item.ticket.title}</span>
+              <span>{item.ticket.reporterName}</span>
+              <StatusBadge status={item.status} />
+              <span>{formatDateTime(item.startedAt)}</span>
+            </button>
+          ))}
+          {recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
+        </div>
+      </section>
       <div className="workflow-console-grid">
         <section className="panel agent-progress-panel agent-progress-panel-primary">
           <div className="panel-heading row-heading">
@@ -748,28 +770,7 @@ export function DeveloperWorkflowConsole() {
         </section>
       ) : null}
 
-      <section className="panel recent-workflows-panel">
-        <div className="panel-heading row-heading">
-          <div>
-            <p className="eyebrow">Recent workflows</p>
-            <h2>Developer handoffs</h2>
-          </div>
-          <button className="secondary-action compact-action" onClick={() => void loadRecentWorkflows()} type="button">
-            Refresh
-          </button>
-        </div>
-        <div className="workflow-table">
-          {recentWorkflows.map((item) => (
-            <button className="workflow-row" key={item.id} onClick={() => setWorkflow(item)} type="button">
-              <span>{item.ticket.title}</span>
-              <span>{item.ticket.reporterName}</span>
-              <StatusBadge status={item.status} />
-              <span>{formatDateTime(item.startedAt)}</span>
-            </button>
-          ))}
-          {recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
-        </div>
-      </section>
+      
     </section>
   );
 }
