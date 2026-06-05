@@ -522,7 +522,6 @@ export function DeveloperWorkflowConsole() {
               const completedTrace = [...traces].reverse().find((entry) => entry.metadata?.status === "completed" || entry.metadata?.status === "failed");
               const isActiveAgent = isRunning && activeAgentType === step.type;
               const isLatestCompletedAgent = latestCompletedAgentType === step.type;
-              const isWaitingForDeveloperDecision = Boolean(workflow?.requiresDeveloperDecision && isLatestCompletedAgent && !isRunning);
               const agentProgress = status === "success" || status === "failed" ? 100 : isActiveAgent ? activeAgentProgress : 0;
               const logicSteps = traces.length > 0 ? traces.map((entry) => entry.message) : liveAgentLog;
               const inputSnapshot =
@@ -533,15 +532,15 @@ export function DeveloperWorkflowConsole() {
                 startedTrace?.metadata?.promptPreview ??
                 (isActiveAgent ? buildLivePromptPreview(step.type, workflow, form) : undefined);
               const handoffPayload =
-                isActiveAgent || isWaitingForDeveloperDecision
-                  ? "Not sent yet. This output will only be packaged for the next agent after Accept and run next."
-                  : completedTrace?.metadata?.handoffPayload ?? agentRun?.outputSnapshot;
+                completedTrace?.metadata?.handoffPayload ??
+                agentRun?.outputSnapshot ??
+                (isActiveAgent ? "Waiting for this agent to finish." : undefined);
               const canShowDetails = traces.length > 0 || isActiveAgent;
 
               return (
                 <article
                   className={`agent-step-card agent-step-${status} ${isActiveAgent ? "agent-step-card-active" : ""} ${
-                    isWaitingForDeveloperDecision ? "agent-step-card-review" : ""
+                    workflow?.requiresDeveloperDecision && isLatestCompletedAgent && !isRunning ? "agent-step-card-review" : ""
                   }`}
                   key={step.type}
                 >
@@ -580,8 +579,8 @@ export function DeveloperWorkflowConsole() {
                             <AgentCodeBlock title="prompt-preview.json" value={promptPreview} />
                           </div>
                           <div>
-                            <h3>{isActiveAgent || isWaitingForDeveloperDecision ? "Handoff status" : "Handoff to next agent"}</h3>
-                            <pre>{stringifySnapshot(handoffPayload)}</pre>
+                            <h3>Handoff status</h3>
+                            <AgentCodeBlock title="handoff-status.json" value={handoffPayload} />
                           </div>
                         </div>
                       </details>
