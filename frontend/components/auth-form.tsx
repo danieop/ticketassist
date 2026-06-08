@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 import { getStoredRolePath } from "./session-redirect";
 
 type AuthMode = "login" | "register";
@@ -311,6 +312,7 @@ export function AuthForm({ mode }: AuthFormProps) {
           ) : null}
 
           <button className="primary-action" disabled={isSubmitting} type="submit">
+            {isSubmitting ? <LoadingSpinner /> : null}
             {isSubmitting ? "Please wait..." : isRegister ? "Create account" : "Login"}
           </button>
         </form>

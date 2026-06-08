@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 
 type RepositoryStatus = "READY" | "FAILED";
 
@@ -370,6 +371,7 @@ export function CodebaseBrowser() {
           <span className="tree-marker">{node.type === "folder" ? (expanded ? "v" : ">") : ""}</span>
           <span className={`tree-kind tree-kind-${node.type}`}>{node.type === "folder" ? "DIR" : "FILE"}</span>
           <span className="tree-name">{node.name}</span>
+          {node.type === "file" && active && isLoadingFile ? <LoadingSpinner /> : null}
           {node.file ? <span className="tree-size">{formatBytes(node.file.sizeBytes)}</span> : null}
         </button>
         {node.type === "folder" && expanded ? node.children.map((child) => renderTreeNode(child, depth + 1)) : null}
@@ -442,6 +444,7 @@ export function CodebaseBrowser() {
               <span>{formatBytes(folderFiles.reduce((sum, file) => sum + file.size, 0))}</span>
             </div>
             <button className="primary-action" disabled={isUploading} type="submit">
+              {isUploading ? <LoadingSpinner /> : null}
               {isUploading ? "Uploading" : "Upload"}
             </button>
           </form>
@@ -452,8 +455,9 @@ export function CodebaseBrowser() {
                 <p className="eyebrow">Repositories</p>
                 <h2>Library</h2>
               </div>
-              <button className="secondary-action compact-action" onClick={() => void loadRepositories()} type="button">
-                {isLoadingRepositories ? "..." : "Refresh"}
+              <button className="secondary-action compact-action" disabled={isLoadingRepositories} onClick={() => void loadRepositories()} type="button">
+                {isLoadingRepositories ? <LoadingSpinner /> : null}
+                {isLoadingRepositories ? "Refreshing" : "Refresh"}
               </button>
             </div>
             <div className="repo-list">
@@ -464,6 +468,7 @@ export function CodebaseBrowser() {
                   onClick={() => setSelectedRepositoryId(repository.id)}
                   type="button"
                 >
+                  {isLoadingRepository && repository.id === selectedRepositoryId ? <LoadingSpinner /> : null}
                   <span className={`repo-status-${repository.status.toLowerCase()}`}>{repository.status}</span>
                   <strong>{repository.name}</strong>
                   <small>

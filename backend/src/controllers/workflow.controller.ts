@@ -1,7 +1,10 @@
 import type { RequestHandler } from "express";
 import {
+  acceptWorkflowAgentSchema,
   createWorkflowSchema,
-  reviewWorkflowSchema
+  rerunWorkflowAgentSchema,
+  reviewWorkflowSchema,
+  updateWorkflowOutputSchema
 } from "../validators/workflow.validators.js";
 import { workflowService } from "../services/workflow.service.js";
 import { AppError } from "../middlewares/error-handler.js";
@@ -50,8 +53,17 @@ export const getWorkflow: RequestHandler = async (request, response, next) => {
 
 export const acceptWorkflowAgent: RequestHandler = async (request, response, next) => {
   try {
-    const workflow = await workflowService.acceptAgent(getParamId(request.params.id));
+    const payload = acceptWorkflowAgentSchema.parse(request.body ?? {});
+    const workflow = await workflowService.acceptAgent(getParamId(request.params.id), payload);
     response.json(workflow);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getWorkflowDashboard: RequestHandler = async (_request, response, next) => {
+  try {
+    response.json(await workflowService.dashboard());
   } catch (error) {
     next(error);
   }
@@ -59,7 +71,18 @@ export const acceptWorkflowAgent: RequestHandler = async (request, response, nex
 
 export const rerunWorkflowAgent: RequestHandler = async (request, response, next) => {
   try {
-    const workflow = await workflowService.rerunAgent(getParamId(request.params.id));
+    const payload = rerunWorkflowAgentSchema.parse(request.body ?? {});
+    const workflow = await workflowService.rerunAgent(getParamId(request.params.id), payload);
+    response.json(workflow);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateWorkflowOutput: RequestHandler = async (request, response, next) => {
+  try {
+    const payload = updateWorkflowOutputSchema.parse(request.body);
+    const workflow = await workflowService.updateAgentOutput(getParamId(request.params.id), payload);
     response.json(workflow);
   } catch (error) {
     next(error);

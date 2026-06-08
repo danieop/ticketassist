@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 import { StatusBadge } from "./status-badge";
 import {
   apiBaseUrl,
   formatDateTime,
   getResponseErrorMessage,
   type TicketSource,
-  type WorkflowApi
+  type WorkflowApi,
+  type WorkflowDashboardApi
 } from "@/lib/workflow-api";
 
 const agentSteps = [
@@ -101,7 +103,29 @@ function highlightCodeLine(line: string) {
   return parts.length > 0 ? parts : " ";
 }
 
-function AgentCodeBlock({ title, value }: { title: string; value: unknown }) {
+function AgentCodeBlock({
+  title,
+  value,
+  isEditing,
+  editValue,
+  editNote,
+  onEditValueChange,
+  onEditNoteChange,
+  onCancelEdit,
+  onSaveEdit,
+  isSaving
+}: {
+  title: string;
+  value: unknown;
+  isEditing?: boolean;
+  editValue?: string;
+  editNote?: string;
+  onEditValueChange?: (value: string) => void;
+  onEditNoteChange?: (value: string) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
+  isSaving?: boolean;
+}) {
   const code = stringifySnapshot(value, Number.POSITIVE_INFINITY);
   const lines = code.split("\n");
 
@@ -111,19 +135,48 @@ function AgentCodeBlock({ title, value }: { title: string; value: unknown }) {
         <span>{title}</span>
         <small>JSON</small>
       </div>
-      <pre>
-        {lines.map((line, index) => (
-          <code className="agent-code-line" key={`${title}-${index}`}>
-            <span className="agent-code-line-number">{index + 1}</span>
-            <span className="agent-code-line-content">{highlightCodeLine(line)}</span>
-          </code>
-        ))}
-      </pre>
+      {isEditing ? (
+        <div className="agent-inline-json-editor">
+          <textarea
+            onChange={(event) => onEditValueChange?.(event.target.value)}
+            spellCheck={false}
+            value={editValue ?? ""}
+          />
+          <input
+            onChange={(event) => onEditNoteChange?.(event.target.value)}
+            placeholder="Change note"
+            type="text"
+            value={editNote ?? ""}
+          />
+          <div className="agent-inline-json-actions">
+            <button className="secondary-action compact-action" disabled={isSaving} onClick={onCancelEdit} type="button">
+              Cancel
+            </button>
+            <button className="primary-action compact-action" disabled={isSaving} onClick={onSaveEdit} type="button">
+              {isSaving ? <LoadingSpinner /> : null}
+              {isSaving ? "Saving" : "Save"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <pre>
+          {lines.map((line, index) => (
+            <code className="agent-code-line" key={`${title}-${index}`}>
+              <span className="agent-code-line-number">{index + 1}</span>
+              <span className="agent-code-line-content">{highlightCodeLine(line)}</span>
+            </code>
+          ))}
+        </pre>
+      )}
     </div>
   );
 }
 
 function getAgentStatus(workflow: WorkflowApi | null, type: string, isRunning: boolean, activeAgentType?: string | null) {
+  if (isRunning && activeAgentType === type) {
+    return "running";
+  }
+
   const agentRun = workflow?.agents.find((agent) => agent.agent.type === type);
 
   if (agentRun) {
@@ -149,6 +202,30 @@ function getTraceForAgent(workflow: WorkflowApi | null, type: string) {
 
 function getAgentRun(workflow: WorkflowApi | null, type: string) {
   return workflow?.agents.find((agent) => agent.agent.type === type) ?? null;
+}
+
+function getAgentOutput(workflow: WorkflowApi | null, type: AgentStepType) {
+  if (type === "TICKET_ANALYZER") {
+    return workflow?.state?.ticketAnalysis;
+  }
+
+  if (type === "PRIORITY_CLASSIFIER") {
+    return workflow?.state?.priorityClassification;
+  }
+
+  if (type === "REPO_SEARCH") {
+    return workflow?.state?.repoSearchResults;
+  }
+
+  if (type === "CODE_CONTEXT") {
+    return workflow?.state?.codeContext;
+  }
+
+  if (type === "FIX_PROPOSAL") {
+    return workflow?.state?.fixProposal;
+  }
+
+  return workflow?.state?.mentorDraft;
 }
 
 function getLatestCompletedAgentType(workflow: WorkflowApi | null) {
@@ -264,12 +341,20 @@ function buildLivePromptPreview(type: AgentStepType, workflow: WorkflowApi | nul
 export function DeveloperWorkflowConsole() {
   const [form, setForm] = useState(emptyTicket);
   const [workflow, setWorkflow] = useState<WorkflowApi | null>(null);
+  const [dashboard, setDashboard] = useState<WorkflowDashboardApi | null>(null);
   const [recentWorkflows, setRecentWorkflows] = useState<WorkflowApi[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isLoadingRecent, setIsLoadingRecent] = useState(false);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
+  const [isSavingOutput, setIsSavingOutput] = useState(false);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [activeAgentType, setActiveAgentType] = useState<AgentStepType | null>(null);
   const [activeAgentProgress, setActiveAgentProgress] = useState(0);
   const [liveAgentLog, setLiveAgentLog] = useState<string[]>([]);
+  const [editingAgentType, setEditingAgentType] = useState<AgentStepType | null>(null);
+  const [editingOutput, setEditingOutput] = useState("");
+  const [editingNote, setEditingNote] = useState("");
+  const [runAsync, setRunAsync] = useState(false);
   const [message, setMessage] = useState("");
 
   const analysis = workflow?.state?.ticketAnalysis;
@@ -296,6 +381,8 @@ export function DeveloperWorkflowConsole() {
   const canRerun = Boolean(workflow?.requiresDeveloperDecision && !isRunning);
 
   const loadRecentWorkflows = async () => {
+    setIsLoadingRecent(true);
+
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows?limit=12`);
 
@@ -306,11 +393,32 @@ export function DeveloperWorkflowConsole() {
       setRecentWorkflows((await response.json()) as WorkflowApi[]);
     } catch (error) {
       setMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingRecent(false);
+    }
+  };
+
+  const loadDashboard = async () => {
+    setIsLoadingDashboard(true);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workflows/dashboard`);
+
+      if (!response.ok) {
+        throw new Error(await getResponseErrorMessage(response));
+      }
+
+      setDashboard((await response.json()) as WorkflowDashboardApi);
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingDashboard(false);
     }
   };
 
   useEffect(() => {
     void loadRecentWorkflows();
+    void loadDashboard();
   }, []);
 
   useEffect(() => {
@@ -356,6 +464,12 @@ export function DeveloperWorkflowConsole() {
     setLiveAgentLog([]);
   };
 
+  const startEditingAgent = (type: AgentStepType) => {
+    setEditingAgentType(type);
+    setEditingOutput(stringifySnapshot(getAgentOutput(workflow, type), Number.POSITIVE_INFINITY));
+    setEditingNote("");
+  };
+
   const updateField = (field: keyof typeof emptyTicket, value: string) => {
     setForm((current) => ({
       ...current,
@@ -376,6 +490,7 @@ export function DeveloperWorkflowConsole() {
           retrievalStrategy: "hybrid",
           forceReindex: false,
           maxResults: 10,
+          runAsync,
           ticket: {
             title: form.title.trim(),
             description: form.description.trim(),
@@ -392,7 +507,8 @@ export function DeveloperWorkflowConsole() {
       const createdWorkflow = (await response.json()) as WorkflowApi;
       setWorkflow(createdWorkflow);
       setRecentWorkflows((current) => [createdWorkflow, ...current.filter((item) => item.id !== createdWorkflow.id)].slice(0, 12));
-      setMessage("Ticket Analyzer finished. Accept to continue or rerun this agent.");
+      setMessage(runAsync ? "Workflow queued. Refresh recent workflows to see the first agent result." : "Ticket Analyzer finished. Accept to continue or rerun this agent.");
+      void loadDashboard();
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -400,7 +516,7 @@ export function DeveloperWorkflowConsole() {
     }
   };
 
-  const runWorkflowAction = async (action: "accept" | "rerun") => {
+  const runWorkflowAction = async (action: "accept" | "rerun", agentType?: AgentStepType) => {
     if (!workflow) {
       return;
     }
@@ -408,7 +524,7 @@ export function DeveloperWorkflowConsole() {
     const actionAgentType =
       action === "accept"
         ? workflow.nextAgent?.type
-        : [...workflow.agents].sort((left, right) => right.agent.executionOrder - left.agent.executionOrder)[0]?.agent.type;
+        : agentType ?? [...workflow.agents].sort((left, right) => right.agent.executionOrder - left.agent.executionOrder)[0]?.agent.type;
     const normalizedAgentType = agentSteps.find((step) => step.type === actionAgentType)?.type ?? null;
 
     startLiveAgent(
@@ -418,7 +534,9 @@ export function DeveloperWorkflowConsole() {
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/${action}`, {
-        method: "POST"
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: action === "accept" || action === "rerun" ? JSON.stringify({ agentType, runAsync }) : undefined
       });
 
       if (!response.ok) {
@@ -431,14 +549,57 @@ export function DeveloperWorkflowConsole() {
         [updatedWorkflow, ...current.filter((item) => item.id !== updatedWorkflow.id)].slice(0, 12)
       );
       setMessage(
-        updatedWorkflow.nextAgent
+        runAsync
+          ? "Agent job queued. Refresh shortly to see the result."
+          : updatedWorkflow.nextAgent
           ? "Agent finished. Review the handoff, then accept to continue or rerun."
           : "All agents finished. Confirm the mentor draft before sending."
       );
+      void loadDashboard();
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
       finishLiveAgent();
+    }
+  };
+
+  const saveAgentOutput = async () => {
+    if (!workflow || !editingAgentType) {
+      return;
+    }
+
+    setIsSavingOutput(true);
+
+    try {
+      const parsedOutput = JSON.parse(editingOutput) as unknown;
+      const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/output`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentType: editingAgentType,
+          output: parsedOutput,
+          note: editingNote.trim() || undefined
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(await getResponseErrorMessage(response));
+      }
+
+      const updatedWorkflow = (await response.json()) as WorkflowApi;
+      setWorkflow(updatedWorkflow);
+      setRecentWorkflows((current) =>
+        [updatedWorkflow, ...current.filter((item) => item.id !== updatedWorkflow.id)].slice(0, 12)
+      );
+      setEditingAgentType(null);
+      setEditingOutput("");
+      setEditingNote("");
+      setMessage("Agent output saved. Review the handoff, then continue.");
+      void loadDashboard();
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      setIsSavingOutput(false);
     }
   };
 
@@ -464,6 +625,7 @@ export function DeveloperWorkflowConsole() {
         current.map((item) => (item.id === submittedWorkflow.id ? submittedWorkflow : item))
       );
       setMessage("Sent to mentor review queue.");
+      void loadDashboard();
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -479,20 +641,74 @@ export function DeveloperWorkflowConsole() {
             <p className="eyebrow">Recent workflows</p>
             <h2>Developer handoffs</h2>
           </div>
-          <button className="secondary-action compact-action" onClick={() => void loadRecentWorkflows()} type="button">
-            Refresh
+          <button className="secondary-action compact-action" disabled={isLoadingRecent} onClick={() => void loadRecentWorkflows()} type="button">
+            {isLoadingRecent ? <LoadingSpinner /> : null}
+            {isLoadingRecent ? "Refreshing" : "Refresh"}
           </button>
         </div>
         <div className="workflow-table">
+          {isLoadingRecent && recentWorkflows.length === 0
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div className="workflow-row workflow-row-skeleton" key={`workflow-skeleton-${index}`}>
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              ))
+            : null}
           {recentWorkflows.map((item) => (
-            <button className="workflow-row" key={item.id} onClick={() => setWorkflow(item)} type="button">
+            <button
+              className={`workflow-row ${item.id === workflow?.id ? "workflow-row-active" : ""}`}
+              key={item.id}
+              onClick={() => setWorkflow(item)}
+              type="button"
+            >
               <span>{item.ticket.title}</span>
               <span>{item.ticket.reporterName}</span>
               <StatusBadge status={item.status} />
               <span>{formatDateTime(item.startedAt)}</span>
             </button>
           ))}
-          {recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
+          {!isLoadingRecent && recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
+        </div>
+      </section>
+      <section className="panel workflow-dashboard-panel">
+        <div className="panel-heading row-heading">
+          <div>
+            <p className="eyebrow">Workflow dashboard</p>
+            <h2>Agent operations</h2>
+          </div>
+          <button className="secondary-action compact-action" disabled={isLoadingDashboard} onClick={() => void loadDashboard()} type="button">
+            {isLoadingDashboard ? <LoadingSpinner /> : null}
+            {isLoadingDashboard ? "Refreshing" : "Refresh"}
+          </button>
+        </div>
+        <div className="workflow-dashboard-grid">
+          <div>
+            <span>Avg latency</span>
+            <strong>{dashboard ? `${dashboard.averageAgentLatencyMs}ms` : "..."}</strong>
+          </div>
+          <div>
+            <span>Fallback rate</span>
+            <strong>{dashboard ? `${Math.round(dashboard.fallbackRate * 100)}%` : "..."}</strong>
+          </div>
+          <div>
+            <span>Reruns</span>
+            <strong>{dashboard?.rerunCount ?? 0}</strong>
+          </div>
+          <div>
+            <span>Edits</span>
+            <strong>{dashboard?.editCount ?? 0}</strong>
+          </div>
+          <div>
+            <span>Queue</span>
+            <strong>{dashboard ? `${dashboard.queue.pending} pending` : "..."}</strong>
+          </div>
+          <div>
+            <span>Mentor decisions</span>
+            <strong>{Object.values(dashboard?.mentorDecisions ?? {}).reduce((sum, value) => sum + value, 0)}</strong>
+          </div>
         </div>
       </section>
       <div className="workflow-console-grid">
@@ -544,6 +760,8 @@ export function DeveloperWorkflowConsole() {
               const completedTrace = [...traces].reverse().find((entry) => entry.metadata?.status === "completed" || entry.metadata?.status === "failed");
               const isActiveAgent = isRunning && activeAgentType === step.type;
               const isLatestCompletedAgent = latestCompletedAgentType === step.type;
+              const isCompletedAgent = status === "success";
+              const isStaleAgent = workflow?.workflowMeta?.staleAgentTypes?.includes(step.type);
               const agentProgress = status === "success" || status === "failed" ? 100 : isActiveAgent ? activeAgentProgress : 0;
               const logicSteps = traces.length > 0 ? traces.map((entry) => entry.message) : liveAgentLog;
               const inputSnapshot =
@@ -554,6 +772,7 @@ export function DeveloperWorkflowConsole() {
                 startedTrace?.metadata?.promptPreview ??
                 (isActiveAgent ? buildLivePromptPreview(step.type, workflow, form) : undefined);
               const handoffPayload =
+                getAgentOutput(workflow, step.type) ??
                 completedTrace?.metadata?.handoffPayload ??
                 agentRun?.outputSnapshot ??
                 (isActiveAgent ? "Waiting for this agent to finish." : undefined);
@@ -570,7 +789,7 @@ export function DeveloperWorkflowConsole() {
                   <div>
                     <div className="agent-card-title-row">
                       <strong>{step.label}</strong>
-                      <small>{agentProgress}%</small>
+                      <small>{isStaleAgent ? "stale" : `${agentProgress}%`}</small>
                     </div>
                     <p>
                       {completedTrace?.metadata?.outputSummary ??
@@ -601,28 +820,53 @@ export function DeveloperWorkflowConsole() {
                             <AgentCodeBlock title="prompt-preview.json" value={promptPreview} />
                           </div>
                           <div>
-                            <h3>Handoff status</h3>
-                            <AgentCodeBlock title="handoff-status.json" value={handoffPayload} />
+                            <div className="agent-detail-heading-row">
+                              <h3>Handoff status</h3>
+                              {workflow?.requiresDeveloperDecision && isCompletedAgent ? (
+                                <button
+                                  className="secondary-action compact-action"
+                                  disabled={isRunning || isSavingOutput}
+                                  onClick={() => startEditingAgent(step.type)}
+                                  type="button"
+                                >
+                                  Edit
+                                </button>
+                              ) : null}
+                            </div>
+                            <AgentCodeBlock
+                              editNote={editingNote}
+                              editValue={editingOutput}
+                              isEditing={editingAgentType === step.type}
+                              isSaving={isSavingOutput}
+                              onCancelEdit={() => setEditingAgentType(null)}
+                              onEditNoteChange={setEditingNote}
+                              onEditValueChange={setEditingOutput}
+                              onSaveEdit={() => void saveAgentOutput()}
+                              title="handoff-status.json"
+                              value={handoffPayload}
+                            />
                           </div>
                         </div>
                       </details>
                     ) : null}
-                    {isLatestCompletedAgent && workflow?.requiresDeveloperDecision ? (
+                    {workflow?.requiresDeveloperDecision && isCompletedAgent ? (
                       <div className="agent-card-actions">
                         <button
                           className="secondary-action compact-action"
                           disabled={!canRerun}
-                          onClick={() => void runWorkflowAction("rerun")}
+                          onClick={() => void runWorkflowAction("rerun", step.type)}
                           type="button"
                         >
+                          {isRunning && activeAgentType === step.type ? <LoadingSpinner /> : null}
                           Rerun agent
                         </button>
                         <button
                           className="primary-action compact-action"
-                          disabled={!canAccept}
+                          disabled={!canAccept || !isLatestCompletedAgent}
                           onClick={() => void runWorkflowAction("accept")}
                           type="button"
                         >
+                          {isRunning && activeAgentType === workflow?.nextAgent?.type ? <LoadingSpinner /> : null}
                           Accept and run next
                         </button>
                       </div>
@@ -683,7 +927,12 @@ export function DeveloperWorkflowConsole() {
                 </select>
               </label>
             </div>
+            <label className="workflow-toggle-row">
+              <input checked={runAsync} onChange={(event) => setRunAsync(event.target.checked)} type="checkbox" />
+              <span>Run agents in background queue</span>
+            </label>
             <button className="primary-action" disabled={isRunning} type="submit">
+              {isRunning ? <LoadingSpinner /> : null}
               {isRunning ? "Running agents" : "Run workflow"}
             </button>
           </form>
@@ -753,8 +1002,9 @@ export function DeveloperWorkflowConsole() {
                 className="primary-action"
                 disabled={workflow.status !== "mentor_draft_ready" || isSubmittingReview}
                 onClick={() => void submitForMentor()}
-                type="button"
+              type="button"
               >
+                {isSubmittingReview ? <LoadingSpinner /> : null}
                 {workflow.status === "waiting_for_review" ? "Sent to mentor" : isSubmittingReview ? "Sending" : "Send to mentor"}
               </button>
             </div>
@@ -766,6 +1016,38 @@ export function DeveloperWorkflowConsole() {
                 <li key={item}>{item}</li>
               ))}
             </ul>
+          </section>
+          <section className="panel workflow-audit-panel">
+            <div className="panel-heading">
+              <p className="eyebrow">Audit and versions</p>
+              <h2>Developer control history</h2>
+            </div>
+            <div className="workflow-audit-grid">
+              <div>
+                <span>Output edits</span>
+                <strong>{workflow.workflowMeta?.edits?.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Reruns</span>
+                <strong>{workflow.workflowMeta?.reruns?.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Prompt versions</span>
+                <strong>{workflow.workflowMeta?.promptVersions?.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Output versions</span>
+                <strong>{workflow.workflowMeta?.outputVersions?.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Review requests</span>
+                <strong>{workflow.workflowMeta?.reviewRequests?.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Stale agents</span>
+                <strong>{workflow.workflowMeta?.staleAgentTypes?.length ?? 0}</strong>
+              </div>
+            </div>
           </section>
         </section>
       ) : null}

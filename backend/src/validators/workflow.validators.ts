@@ -6,6 +6,7 @@ export const createWorkflowSchema = z.object({
   indexName: z.string().trim().min(1).optional(),
   forceReindex: z.coerce.boolean().default(false),
   maxResults: z.coerce.number().int().positive().max(50).default(10),
+  runAsync: z.coerce.boolean().default(false),
   ticket: z.object({
     title: z.string().trim().min(1),
     description: z.string().trim().default(""),
@@ -21,5 +22,39 @@ export const reviewWorkflowSchema = z.object({
   mentorId: z.string().optional()
 });
 
+export const updateWorkflowOutputSchema = z.object({
+  agentType: z.enum([
+    "TICKET_ANALYZER",
+    "PRIORITY_CLASSIFIER",
+    "REPO_SEARCH",
+    "CODE_CONTEXT",
+    "FIX_PROPOSAL",
+    "MENTOR_DRAFT"
+  ]),
+  output: z.unknown(),
+  note: z.string().trim().max(500).optional()
+});
+
+export const rerunWorkflowAgentSchema = z.object({
+  agentType: z
+    .enum([
+      "TICKET_ANALYZER",
+      "PRIORITY_CLASSIFIER",
+      "REPO_SEARCH",
+      "CODE_CONTEXT",
+      "FIX_PROPOSAL",
+      "MENTOR_DRAFT"
+    ])
+    .optional(),
+  runAsync: z.coerce.boolean().default(false)
+});
+
+export const acceptWorkflowAgentSchema = z.object({
+  runAsync: z.coerce.boolean().default(false)
+});
+
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type ReviewWorkflowInput = z.infer<typeof reviewWorkflowSchema>;
+export type UpdateWorkflowOutputInput = z.infer<typeof updateWorkflowOutputSchema>;
+export type RerunWorkflowAgentInput = z.infer<typeof rerunWorkflowAgentSchema>;
+export type AcceptWorkflowAgentInput = z.infer<typeof acceptWorkflowAgentSchema>;
