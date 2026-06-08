@@ -220,7 +220,7 @@ Responsibility:
 - Validate analysis, priority, and repository config.
 - Generate search terms and a semantic query.
 - Build or reuse a pgvector index.
-- Run keyword, vector, or hybrid search.
+- Run keyword, vector, or hybrid search over chunks.
 - Return top-k snippets/chunks only.
 
 The agent never sends the whole repository or whole files to an LLM.
@@ -357,16 +357,23 @@ embeddingModel: text-embedding-3-small
 
 ## Code Chunking
 
-Chunking is line based.
+Chunking is structure aware and versioned.
 
 Current behavior:
 
-- Max chunk size: 120 lines
-- Overlap: 15 lines
-- Stores line range, language, content hash, symbols, and metadata
-- Skips binary files
-- Skips files over 500 KB
-- Skips generated/build directories such as `node_modules`, `.git`, `dist`, `build`, `.next`, `target`, and `coverage`
+- Markdown files split on headings.
+- SQL files split on statement starts such as `CREATE`, `ALTER`, `INSERT`, `UPDATE`, `DELETE`, `WITH`, and `SELECT`.
+- Config files split on key boundaries.
+- Code files split on function, class, interface, enum, method, and markup block boundaries.
+- Files fall back to line windows when no structure boundary is detected.
+- Structured chunks use a 96-line cap with 18 lines of overlap.
+- Fallback chunks use a 120-line cap with 15 lines of overlap.
+- Each chunk stores `chunkType`, `primarySymbol`, `contentHash`, and `chunkingVersion`.
+- The current chunking version is `structure-v2`.
+- Existing indexes are reused only when all stored chunks match the current chunking version; otherwise the index is rebuilt.
+- Skips binary files.
+- Skips files over 500 KB.
+- Skips generated/build directories such as `node_modules`, `.git`, `dist`, `build`, `.next`, `target`, and `coverage`.
 
 Supported extensions include:
 
@@ -539,10 +546,14 @@ Deduplication key:
 
 Hybrid scoring:
 
-- combines provider scores
-- adds an overlap bonus if the same result appears from multiple providers
+- normalizes vector and keyword scores before combining them
+- adds a small overlap bonus if the same chunk appears from multiple providers
+- keeps provider scores in metadata for debugging
 - preserves matched lines from keyword results when available
 - preserves snippet and symbols
+- reranks on the merged chunk list and returns the top-k results
+
+Keyword search now works on the same chunks as vector search, so both providers compare chunk-level units rather than whole files. Query terms are also expanded for common search intent such as `checkout`, `payment`, `timeout`, and `auth`.
 
 Returned result type can be:
 

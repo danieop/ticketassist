@@ -146,6 +146,7 @@ For a successful workflow:
 ## Troubleshooting
 
 - If the workflow stops before `6/6`, check backend logs and OpenAI/env configuration.
+- Repo search now uses structure-aware, versioned chunking; if repository context looks stale after a search change, rerun with reindex/force rebuild.
 - If embedding config is unavailable, repo search should still fall back to keyword search and store warnings instead of failing.
 - If the mentor queue is empty, confirm the developer clicked `Send to mentor` and the workflow status is `waiting_for_review`.
 - If login redirects to the wrong dashboard, click `Switch account` to clear browser session storage and cookies.
