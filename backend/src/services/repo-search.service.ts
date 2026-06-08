@@ -93,7 +93,9 @@ const stopWords = new Set([
   "with"
 ]);
 
-const CHUNKING_VERSION = "structure-v2";
+const CHUNKING_VERSION = "symbol-v1";
+const HEURISTIC_STRUCTURE_SOURCE = "heuristic-structure";
+const HEURISTIC_FALLBACK_SOURCE = "heuristic-fallback";
 const STRUCTURE_CHUNK_MAX_LINES = 96;
 const STRUCTURE_CHUNK_OVERLAP = 18;
 const FALLBACK_CHUNK_MAX_LINES = 120;
@@ -125,6 +127,8 @@ type ChunkBoundary = {
   startLine: number;
   chunkType: string;
   symbol?: string;
+  parserSource?: string;
+  confidence?: number;
 };
 type ChunkSearchSource = "vector" | "keyword";
 
@@ -147,6 +151,7 @@ export type RepoIndexStatus = {
   indexName: string;
   exists: boolean;
   builtOrUpdated: boolean;
+  chunkingVersion?: string;
   indexedFiles?: number;
   indexedChunks?: number;
   embeddingModel?: string;
@@ -213,6 +218,35 @@ function getLanguage(filePath: string) {
 
 function hashContent(content: string) {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function buildSymbolPath(filePath: string, symbol: string | undefined, chunkKind: string, startLine: number) {
+  return symbol ? `${filePath}#${symbol}` : `${filePath}#${chunkKind}:${startLine}`;
+}
+
+function getSymbolConfidence(input: {
+  chunkKind: string;
+  parserSource: string;
+  symbol?: string;
+  confidence?: number;
+}) {
+  if (typeof input.confidence === "number") {
+    return input.confidence;
+  }
+
+  if (input.parserSource === HEURISTIC_FALLBACK_SOURCE) {
+    return input.symbol ? 0.45 : 0.3;
+  }
+
+  if (input.symbol && ["class", "interface", "enum", "function", "method"].includes(input.chunkKind)) {
+    return 0.72;
+  }
+
+  if (input.symbol) {
+    return 0.6;
+  }
+
+  return 0.4;
 }
 
 function extractSymbols(content: string) {
@@ -398,7 +432,9 @@ function buildChunk(
   startLine: number,
   endLine: number,
   chunkType: string,
-  symbol?: string
+  symbol?: string,
+  parserSource = HEURISTIC_STRUCTURE_SOURCE,
+  confidence?: number
 ) {
   const clampedStart = Math.max(1, startLine);
   const clampedEnd = Math.min(lines.length, endLine);
@@ -414,6 +450,13 @@ function buildChunk(
     20
   );
   const language = getLanguage(filePath);
+  const symbolPath = buildSymbolPath(filePath, symbol, chunkType, clampedStart);
+  const symbolConfidence = getSymbolConfidence({
+    chunkKind: chunkType,
+    parserSource,
+    symbol,
+    confidence
+  });
 
   return {
     filePath,
@@ -427,7 +470,13 @@ function buildChunk(
       filePath,
       language,
       chunkType,
+      chunkKind: chunkType,
       primarySymbol: symbol ?? null,
+      symbolPath,
+      symbolPathParts: symbol ? [filePath, symbol] : [filePath, `${chunkType}:${clampedStart}`],
+      parserSource,
+      parserVersion: CHUNKING_VERSION,
+      symbolConfidence,
       chunkingVersion: CHUNKING_VERSION
     }
   } satisfies CodeChunk;
@@ -439,14 +488,25 @@ function splitChunkRange(
   startLine: number,
   endLine: number,
   chunkType: string,
-  symbol?: string
+  symbol?: string,
+  parserSource = HEURISTIC_STRUCTURE_SOURCE,
+  confidence?: number
 ) {
   const chunks: CodeChunk[] = [];
   const maxLines = getChunkingProfile(filePath) === "code" ? STRUCTURE_CHUNK_MAX_LINES : FALLBACK_CHUNK_MAX_LINES;
   const overlap = getChunkingProfile(filePath) === "code" ? STRUCTURE_CHUNK_OVERLAP : FALLBACK_CHUNK_OVERLAP;
 
   for (let index = startLine; index <= endLine; index += Math.max(1, maxLines - overlap)) {
-    const chunk = buildChunk(filePath, lines, index, Math.min(endLine, index + maxLines - 1), chunkType, symbol);
+    const chunk = buildChunk(
+      filePath,
+      lines,
+      index,
+      Math.min(endLine, index + maxLines - 1),
+      chunkType,
+      symbol,
+      parserSource,
+      confidence
+    );
 
     if (chunk) {
       chunks.push(chunk);
@@ -467,13 +527,24 @@ function chunkFile(filePath: string, content: string): CodeChunk[] {
     if (boundary) {
       boundaries.push({
         ...boundary,
-        startLine: index + 1
+        startLine: index + 1,
+        parserSource: boundary.parserSource ?? HEURISTIC_STRUCTURE_SOURCE,
+        confidence: boundary.confidence
       });
     }
   });
 
   if (boundaries.length === 0) {
-    return splitChunkRange(filePath, lines, 1, lines.length, getPrimaryChunkType(filePath));
+    return splitChunkRange(
+      filePath,
+      lines,
+      1,
+      lines.length,
+      getPrimaryChunkType(filePath),
+      undefined,
+      HEURISTIC_FALLBACK_SOURCE,
+      0.3
+    );
   }
 
   const chunks: CodeChunk[] = [];
@@ -482,7 +553,16 @@ function chunkFile(filePath: string, content: string): CodeChunk[] {
     .sort((left, right) => left.startLine - right.startLine);
 
   if (orderedBoundaries[0].startLine > 1) {
-    const preamble = buildChunk(filePath, lines, 1, orderedBoundaries[0].startLine - 1, "header");
+    const preamble = buildChunk(
+      filePath,
+      lines,
+      1,
+      orderedBoundaries[0].startLine - 1,
+      "header",
+      undefined,
+      HEURISTIC_FALLBACK_SOURCE,
+      0.35
+    );
 
     if (preamble) {
       chunks.push(preamble);
@@ -493,21 +573,52 @@ function chunkFile(filePath: string, content: string): CodeChunk[] {
     const startLine = boundary.startLine;
     const nextBoundary = orderedBoundaries[index + 1];
     const endLine = nextBoundary ? nextBoundary.startLine - 1 : lines.length;
-    const chunk = buildChunk(filePath, lines, startLine, endLine, boundary.chunkType, boundary.symbol);
+    const chunk = buildChunk(
+      filePath,
+      lines,
+      startLine,
+      endLine,
+      boundary.chunkType,
+      boundary.symbol,
+      boundary.parserSource ?? HEURISTIC_STRUCTURE_SOURCE,
+      boundary.confidence
+    );
 
     if (!chunk) {
       return;
     }
 
     if (chunk.endLine - chunk.startLine + 1 > (profile === "code" ? STRUCTURE_CHUNK_MAX_LINES : FALLBACK_CHUNK_MAX_LINES)) {
-      chunks.push(...splitChunkRange(filePath, lines, chunk.startLine, chunk.endLine, boundary.chunkType, boundary.symbol));
+      chunks.push(
+        ...splitChunkRange(
+          filePath,
+          lines,
+          chunk.startLine,
+          chunk.endLine,
+          boundary.chunkType,
+          boundary.symbol,
+          boundary.parserSource ?? HEURISTIC_STRUCTURE_SOURCE,
+          boundary.confidence
+        )
+      );
       return;
     }
 
     chunks.push(chunk);
   });
 
-  return chunks.length > 0 ? chunks : splitChunkRange(filePath, lines, 1, lines.length, getPrimaryChunkType(filePath));
+  return chunks.length > 0
+    ? chunks
+    : splitChunkRange(
+        filePath,
+        lines,
+        1,
+        lines.length,
+        getPrimaryChunkType(filePath),
+        undefined,
+        HEURISTIC_FALLBACK_SOURCE,
+        0.3
+      );
 }
 
 async function getRepositoryWithFiles(repositoryId: string): Promise<RepositoryWithFiles> {
@@ -618,6 +729,7 @@ async function indexRepository(input: {
       indexName: input.indexName,
       exists: true,
       builtOrUpdated: false,
+      chunkingVersion: CHUNKING_VERSION,
       indexedFiles: repository.files.filter(isSearchableFile).length,
       indexedChunks: currentVersionCount,
       embeddingModel: embeddingClient.model,
@@ -707,6 +819,7 @@ async function indexRepository(input: {
     indexName: input.indexName,
     exists: true,
     builtOrUpdated: true,
+    chunkingVersion: CHUNKING_VERSION,
     indexedFiles,
     indexedChunks,
     embeddingModel: embeddingClient.model,
@@ -815,7 +928,12 @@ function scoreKeywordChunk(chunk: CodeChunk, normalizedTerms: string[]) {
   const lowerBaseName = path.basename(lowerPath);
   const lowerContent = chunk.content.toLowerCase();
   const lowerSymbols = (chunk.symbols ?? []).join(" ").toLowerCase();
-  const chunkType = typeof chunk.metadata.chunkType === "string" ? chunk.metadata.chunkType : "";
+  const chunkType =
+    typeof chunk.metadata.chunkKind === "string"
+      ? chunk.metadata.chunkKind
+      : typeof chunk.metadata.chunkType === "string"
+        ? chunk.metadata.chunkType
+        : "";
   const lines = chunk.content.split(/\r?\n/);
   const matchedTerms = new Set<string>();
   const matchedLines: { lineNumber: number; text: string }[] = [];
@@ -1056,6 +1174,7 @@ export const repoSearchService = {
       indexName: input.indexName,
       exists: false,
       builtOrUpdated: false,
+      chunkingVersion: CHUNKING_VERSION,
       vectorStore: "postgresql_pgvector"
     };
     const providerResults: { source: ChunkSearchSource; items: RepoSearchResult[] }[] = [];

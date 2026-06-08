@@ -58,6 +58,7 @@ export const repoSearchSchema = z.object({
     indexName: z.string(),
     exists: z.boolean(),
     builtOrUpdated: z.boolean(),
+    chunkingVersion: z.string().optional(),
     indexedFiles: z.number().int().optional(),
     indexedChunks: z.number().int().optional(),
     embeddingModel: z.string().optional(),
