@@ -30,6 +30,26 @@ export type WorkflowApi = {
     name: string;
     type: string;
   } | null;
+  workflowMeta?: {
+    edits?: {
+      agentType?: string;
+      note?: string;
+      createdAt?: string;
+    }[];
+    reruns?: {
+      agentType?: string;
+      invalidatedAgentTypes?: string[];
+      createdAt?: string;
+    }[];
+    reviewRequests?: {
+      decision?: ReviewDecision;
+      comment?: string;
+      createdAt?: string;
+    }[];
+    promptVersions?: unknown[];
+    outputVersions?: unknown[];
+    staleAgentTypes?: string[];
+  };
   requiresDeveloperDecision?: boolean;
   ticket: {
     id: string;
@@ -141,6 +161,26 @@ export type WorkflowApi = {
       email: string;
     };
   } | null;
+};
+
+export type WorkflowDashboardApi = {
+  workflowsByStatus: Record<string, number>;
+  averageAgentLatencyMs: number;
+  agentLatencyByType: Record<string, number>;
+  fallbackRate: number;
+  fallbackCount: number;
+  rerunCount: number;
+  editCount: number;
+  mentorDecisions: Record<string, number>;
+  queue: {
+    pending: number;
+    active?: {
+      workflowRunId: string;
+      label: string;
+    } | null;
+    completed: unknown[];
+    failed: unknown[];
+  };
 };
 
 export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";

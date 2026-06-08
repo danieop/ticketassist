@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 
 type UserRole = "DEVELOPER" | "MENTOR" | "ADMIN";
 type RegistrationStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -166,7 +167,8 @@ export function AdminUserManagement() {
             <h2>Registration approval queue</h2>
           </div>
           <button className="secondary-action" disabled={isLoading} onClick={() => void loadAdminData()} type="button">
-            Refresh
+            {isLoading ? <LoadingSpinner /> : null}
+            {isLoading ? "Refreshing" : "Refresh"}
           </button>
         </div>
         <p className="muted-text">{status}</p>
@@ -185,10 +187,12 @@ export function AdminUserManagement() {
               <span>{request.role}</span>
               <span>{formatDate(request.createdAt)}</span>
               <span className="admin-actions">
-                <button type="button" onClick={() => void reviewRequest(request.id, "approve")}>
+                <button disabled={isLoading} type="button" onClick={() => void reviewRequest(request.id, "approve")}>
+                  {isLoading ? <LoadingSpinner /> : null}
                   Approve
                 </button>
-                <button type="button" onClick={() => void reviewRequest(request.id, "reject")}>
+                <button disabled={isLoading} type="button" onClick={() => void reviewRequest(request.id, "reject")}>
+                  {isLoading ? <LoadingSpinner /> : null}
                   Reject
                 </button>
               </span>

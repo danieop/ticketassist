@@ -1,10 +1,12 @@
 import { Router } from "express";
 import {
   createWorkflow,
+  getWorkflowDashboard,
   getWorkflow,
   listWorkflows,
   acceptWorkflowAgent,
   rerunWorkflowAgent,
+  updateWorkflowOutput,
   submitWorkflowForReview,
   reviewWorkflow
 } from "../controllers/workflow.controller.js";
@@ -30,6 +32,7 @@ export const workflowRouter = Router();
  */
 workflowRouter.post("/", createWorkflow);
 workflowRouter.get("/", listWorkflows);
+workflowRouter.get("/dashboard", getWorkflowDashboard);
 
 /**
  * @openapi
@@ -53,6 +56,7 @@ workflowRouter.get("/", listWorkflows);
 workflowRouter.get("/:id", getWorkflow);
 workflowRouter.post("/:id/accept", acceptWorkflowAgent);
 workflowRouter.post("/:id/rerun", rerunWorkflowAgent);
+workflowRouter.patch("/:id/output", updateWorkflowOutput);
 workflowRouter.post("/:id/submit", submitWorkflowForReview);
 
 /**

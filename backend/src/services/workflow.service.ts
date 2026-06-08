@@ -3,16 +3,31 @@ import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
 import { repositoryService } from "./repository.service.js";
+import { workflowJobQueue } from "./workflow-job-queue.service.js";
 import {
+  getAgentForCompletedStatus,
   getNextWorkflowAgent,
+  type WorkflowAgentType,
   rerunCompletedWorkflowAgent,
   runNextWorkflowAgent,
   workflowAgentSequence
 } from "./workflow.graph.js";
-import type { TicketWorkflowState, WorkflowStatus } from "./workflow-state.js";
+import {
+  codeContextSchema,
+  fixProposalSchema,
+  mentorDraftSchema,
+  priorityClassificationSchema,
+  repoSearchSchema,
+  ticketAnalysisSchema,
+  type TicketWorkflowState,
+  type WorkflowStatus
+} from "./workflow-state.js";
 import { nowIso } from "./workflow-state.js";
 import type {
+  AcceptWorkflowAgentInput,
   CreateWorkflowInput,
+  RerunWorkflowAgentInput,
+  UpdateWorkflowOutputInput,
   ReviewWorkflowInput
 } from "../validators/workflow.validators.js";
 
@@ -107,6 +122,118 @@ const dbStatusByWorkflowStatus: Record<
   waiting_for_review: "WAITING_FOR_REVIEW",
   failed: "FAILED"
 };
+
+const outputFieldByAgentType: Record<
+  WorkflowAgentType,
+  "analysis" | "priority" | "repoSearch" | "codeContext" | "fixProposal" | "mentorDraft"
+> = {
+  TICKET_ANALYZER: "analysis",
+  PRIORITY_CLASSIFIER: "priority",
+  REPO_SEARCH: "repoSearch",
+  CODE_CONTEXT: "codeContext",
+  FIX_PROPOSAL: "fixProposal",
+  MENTOR_DRAFT: "mentorDraft"
+};
+
+const stateStatusByAgentType: Record<WorkflowAgentType, WorkflowStatus> = {
+  TICKET_ANALYZER: "ticket_analyzed",
+  PRIORITY_CLASSIFIER: "priority_classified",
+  REPO_SEARCH: "repo_searched",
+  CODE_CONTEXT: "code_context_ready",
+  FIX_PROPOSAL: "fix_proposed",
+  MENTOR_DRAFT: "mentor_draft_ready"
+};
+
+const dbStateFieldByAgentType: Record<
+  WorkflowAgentType,
+  | "ticketAnalysis"
+  | "priorityClassification"
+  | "repoSearchResults"
+  | "codeContext"
+  | "fixProposal"
+  | "mentorDraft"
+> = {
+  TICKET_ANALYZER: "ticketAnalysis",
+  PRIORITY_CLASSIFIER: "priorityClassification",
+  REPO_SEARCH: "repoSearchResults",
+  CODE_CONTEXT: "codeContext",
+  FIX_PROPOSAL: "fixProposal",
+  MENTOR_DRAFT: "mentorDraft"
+};
+
+function getAgentSequenceIndex(agentType: WorkflowAgentType) {
+  return workflowAgentSequence.findIndex((agent) => agent.type === agentType);
+}
+
+function parseAgentOutput(agentType: WorkflowAgentType, output: unknown) {
+  if (agentType === "TICKET_ANALYZER") {
+    return ticketAnalysisSchema.parse(output);
+  }
+
+  if (agentType === "PRIORITY_CLASSIFIER") {
+    return priorityClassificationSchema.parse(output);
+  }
+
+  if (agentType === "REPO_SEARCH") {
+    return repoSearchSchema.parse(output);
+  }
+
+  if (agentType === "CODE_CONTEXT") {
+    return codeContextSchema.parse(output);
+  }
+
+  if (agentType === "FIX_PROPOSAL") {
+    return fixProposalSchema.parse(output);
+  }
+
+  return mentorDraftSchema.parse(output);
+}
+
+function getWorkflowMeta(inputTicket: Prisma.JsonValue | null | undefined) {
+  if (!inputTicket || typeof inputTicket !== "object" || Array.isArray(inputTicket)) {
+    return {};
+  }
+
+  const value = inputTicket as { workflowMeta?: unknown };
+  return value.workflowMeta && typeof value.workflowMeta === "object" && !Array.isArray(value.workflowMeta)
+    ? (value.workflowMeta as Record<string, unknown>)
+    : {};
+}
+
+function nextVersion(meta: Record<string, unknown>, key: "promptVersions" | "outputVersions") {
+  const values = Array.isArray(meta[key]) ? (meta[key] as unknown[]) : [];
+  return values.length + 1;
+}
+
+function addAgentVersionMeta(state: TicketWorkflowState, agentType: WorkflowAgentType, source: "agent_run" | "developer_edit") {
+  const meta = state.workflowMeta ?? {};
+  const createdAt = nowIso();
+
+  return {
+    ...state,
+    workflowMeta: {
+      ...meta,
+      promptVersions: [
+        ...((Array.isArray(meta.promptVersions) ? meta.promptVersions : []) as unknown[]),
+        {
+          version: nextVersion(meta, "promptVersions"),
+          agentType,
+          source,
+          createdAt
+        }
+      ],
+      outputVersions: [
+        ...((Array.isArray(meta.outputVersions) ? meta.outputVersions : []) as unknown[]),
+        {
+          version: nextVersion(meta, "outputVersions"),
+          agentType,
+          source,
+          createdAt
+        }
+      ]
+    }
+  };
+}
 
 async function ensureDefaultAgents() {
   for (const agent of defaultAgents) {
@@ -311,6 +438,7 @@ function rebuildWorkflowState(workflow: Awaited<ReturnType<typeof findWorkflowOr
     mentorDraft: (state.mentorDraft as TicketWorkflowState["mentorDraft"]) ?? undefined,
     errors: Array.isArray(state.error) ? (state.error as TicketWorkflowState["errors"]) : [],
     trace: getStoredTrace(workflow),
+    workflowMeta: getWorkflowMeta(state.inputTicket),
     createdAt: workflow.startedAt.toISOString(),
     updatedAt: state.updatedAt.toISOString()
   };
@@ -336,7 +464,11 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
       await tx.workflowState.update({
         where: { workflowRunId },
         data: {
-          inputTicket: toJsonValue(state.ticket),
+          inputTicket: toJsonValue({
+            ticket: state.ticket,
+            repoConfig: state.repoConfig,
+            workflowMeta: state.workflowMeta ?? {}
+          }),
           ticketAnalysis: toJsonValue(state.analysis ?? null),
           priorityClassification: toJsonValue(state.priority ?? null),
           repoSearchResults: toJsonValue(state.repoSearch ?? null),
@@ -436,6 +568,7 @@ function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) 
   const apiStatus = toApiStatus(workflow.status) as WorkflowStatus;
   const progress = getWorkflowProgress(apiStatus);
   const nextAgent = getNextAgentSummary(apiStatus);
+  const workflowMeta = getWorkflowMeta(workflow.state?.inputTicket);
 
   return {
     id: workflow.id,
@@ -445,6 +578,7 @@ function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) 
     currentAgent: workflow.currentAgent,
     progress,
     nextAgent,
+    workflowMeta,
     requiresDeveloperDecision:
       workflow.status !== "FAILED" &&
       workflow.status !== "WAITING_FOR_REVIEW" &&
@@ -494,7 +628,214 @@ async function findWorkflowOrThrow(id: string) {
   return workflow;
 }
 
+async function runNextAndPersist(workflowRunId: string, state: TicketWorkflowState) {
+  const agent = getNextWorkflowAgent(state.status);
+  const nextState = await runNextWorkflowAgent(state);
+  const versionedState = agent ? addAgentVersionMeta(nextState, agent.type, "agent_run") : nextState;
+  await persistWorkflowOutcome(workflowRunId, versionedState);
+}
+
+function enqueueNextAgent(workflowRunId: string, state: TicketWorkflowState, label: string) {
+  return workflowJobQueue.enqueue({
+    workflowRunId,
+    label,
+    run: () => runNextAndPersist(workflowRunId, state)
+  });
+}
+
+function getEditableAgentTypes(state: TicketWorkflowState) {
+  const completedIndex = workflowAgentSequence.findIndex((agent) => agent.completedStatus === state.status);
+
+  if (completedIndex < 0 && state.status !== "failed") {
+    return [];
+  }
+
+  if (state.status === "failed") {
+    return workflowAgentSequence
+      .filter((agent) => state.trace.some((entry) => entry.agent === agent.name && entry.status === "completed"))
+      .map((agent) => agent.type);
+  }
+
+  return workflowAgentSequence.slice(0, completedIndex + 1).map((agent) => agent.type);
+}
+
+function clearOutputsFromAgent(state: TicketWorkflowState, agentType: WorkflowAgentType) {
+  const startIndex = getAgentSequenceIndex(agentType);
+  const staleAgentTypes = workflowAgentSequence.slice(startIndex).map((agent) => agent.type);
+  const invalidatedTrace = state.trace.filter((entry) => {
+    const traceAgent = workflowAgentSequence.find((agent) => agent.name === entry.agent);
+    return traceAgent ? getAgentSequenceIndex(traceAgent.type) >= startIndex : false;
+  });
+  const nextState: TicketWorkflowState = {
+    ...state,
+    status: workflowAgentSequence[startIndex].expectedStatus,
+    errors: [],
+    trace: state.trace.filter((entry) => {
+      const traceAgent = workflowAgentSequence.find((agent) => agent.name === entry.agent);
+      return traceAgent ? getAgentSequenceIndex(traceAgent.type) < startIndex : true;
+    }),
+    workflowMeta: {
+      ...(state.workflowMeta ?? {}),
+      staleAgentTypes,
+      reruns: [
+        ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
+        {
+          agentType,
+          invalidatedAgentTypes: staleAgentTypes,
+          invalidatedTrace,
+          createdAt: nowIso()
+        }
+      ]
+    },
+    updatedAt: nowIso()
+  };
+
+  for (const type of staleAgentTypes) {
+    const field = outputFieldByAgentType[type];
+    delete nextState[field];
+  }
+
+  return nextState;
+}
+
+function clearOutputsAfterAgent(state: TicketWorkflowState, agentType: WorkflowAgentType) {
+  const completedIndex = getAgentSequenceIndex(agentType);
+  const staleAgentTypes = workflowAgentSequence.slice(completedIndex + 1).map((agent) => agent.type);
+  const invalidatedTrace = state.trace.filter((entry) => {
+    const traceAgent = workflowAgentSequence.find((agent) => agent.name === entry.agent);
+    return traceAgent ? getAgentSequenceIndex(traceAgent.type) > completedIndex : false;
+  });
+  const nextState: TicketWorkflowState = {
+    ...state,
+    status: workflowAgentSequence[completedIndex].completedStatus,
+    errors: [],
+    trace: state.trace.filter((entry) => {
+      const traceAgent = workflowAgentSequence.find((agent) => agent.name === entry.agent);
+      return traceAgent ? getAgentSequenceIndex(traceAgent.type) <= completedIndex : true;
+    }),
+    workflowMeta: {
+      ...(state.workflowMeta ?? {}),
+      staleAgentTypes,
+      invalidations: [
+        ...(((state.workflowMeta?.invalidations as unknown[]) ?? [])),
+        {
+          agentType,
+          invalidatedAgentTypes: staleAgentTypes,
+          invalidatedTrace,
+          createdAt: nowIso()
+        }
+      ]
+    },
+    updatedAt: nowIso()
+  };
+
+  for (const type of staleAgentTypes) {
+    const field = outputFieldByAgentType[type];
+    delete nextState[field];
+  }
+
+  return nextState;
+}
+
+function replaceAgentOutput(state: TicketWorkflowState, input: UpdateWorkflowOutputInput) {
+  const agentType = input.agentType as WorkflowAgentType;
+  const editableTypes = getEditableAgentTypes(state);
+
+  if (!editableTypes.includes(agentType)) {
+    throw new AppError(400, "Only completed agent outputs can be edited");
+  }
+
+  const parsedOutput = parseAgentOutput(agentType, input.output);
+  const stateField = outputFieldByAgentType[agentType];
+  const editedState = clearOutputsAfterAgent(state, agentType);
+
+  return {
+    ...editedState,
+    [stateField]: parsedOutput,
+    workflowMeta: {
+      ...(editedState.workflowMeta ?? {}),
+      edits: [
+        ...(((state.workflowMeta?.edits as unknown[]) ?? [])),
+        {
+          agentType,
+          note: input.note,
+          createdAt: nowIso()
+        }
+      ]
+    },
+    updatedAt: nowIso()
+  } as TicketWorkflowState;
+}
+
 export const workflowService = {
+  async dashboard() {
+    const [workflowCounts, agentRuns, reviews, traceLogs] = await Promise.all([
+      prisma.workflowRun.groupBy({
+        by: ["status"],
+        _count: {
+          _all: true
+        }
+      }),
+      prisma.agentRun.findMany({
+        include: {
+          agent: true
+        },
+        orderBy: {
+          startedAt: "desc"
+        },
+        take: 500
+      }),
+      prisma.mentorReview.groupBy({
+        by: ["decision"],
+        _count: {
+          _all: true
+        }
+      }),
+      prisma.traceLog.findMany({
+        orderBy: {
+          createdAt: "desc"
+        },
+        take: 1000
+      })
+    ]);
+
+    const completedAgentRuns = agentRuns.filter((run) => run.finishedAt);
+    const totalLatency = completedAgentRuns.reduce(
+      (sum, run) => sum + (run.finishedAt!.getTime() - run.startedAt.getTime()),
+      0
+    );
+    const fallbackCount = traceLogs.filter((trace) => {
+      const metadata = trace.metadata as { outputSummary?: string } | null;
+      return metadata?.outputSummary?.toLowerCase().includes("fallback") ?? false;
+    }).length;
+    const rerunCount = traceLogs.filter((trace) => trace.message.toLowerCase().includes("rerun")).length;
+    const editCount = traceLogs.filter((trace) => trace.message.toLowerCase().includes("edited")).length;
+
+    return {
+      workflowsByStatus: Object.fromEntries(workflowCounts.map((row) => [row.status, row._count._all])),
+      averageAgentLatencyMs:
+        completedAgentRuns.length > 0 ? Math.round(totalLatency / completedAgentRuns.length) : 0,
+      agentLatencyByType: Object.fromEntries(
+        Object.entries(
+          completedAgentRuns.reduce<Record<string, { total: number; count: number }>>((accumulator, run) => {
+            const type = run.agent.type;
+            accumulator[type] ??= { total: 0, count: 0 };
+            accumulator[type].total += run.finishedAt!.getTime() - run.startedAt.getTime();
+            accumulator[type].count += 1;
+            return accumulator;
+          }, {})
+        ).map(([type, value]) => [type, Math.round(value.total / value.count)])
+      ),
+      fallbackRate:
+        traceLogs.length > 0 ? Number((fallbackCount / traceLogs.length).toFixed(3)) : 0,
+      fallbackCount,
+      rerunCount,
+      editCount,
+      mentorDecisions: Object.fromEntries(reviews.map((row) => [row.decision, row._count._all])),
+      queue: workflowJobQueue.stats()
+    };
+  },
+
   async list(input: { status?: string; limit?: number } = {}) {
     const workflows = await prisma.workflowRun.findMany({
       where: input.status
@@ -600,12 +941,21 @@ export const workflowService = {
       },
       errors: [],
       trace: [],
+      workflowMeta: {
+        edits: [],
+        reruns: [],
+        staleAgentTypes: []
+      },
       createdAt: timestamp,
       updatedAt: timestamp
     };
 
-    const nextState = await runNextWorkflowAgent(initialState);
-    await persistWorkflowOutcome(created.run.id, nextState);
+    if (input.runAsync) {
+      enqueueNextAgent(created.run.id, initialState, "Run first workflow agent");
+      return mapWorkflow(await findWorkflowOrThrow(created.run.id));
+    }
+
+    await runNextAndPersist(created.run.id, initialState);
 
     return mapWorkflow(await findWorkflowOrThrow(created.run.id));
   },
@@ -614,7 +964,7 @@ export const workflowService = {
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
-  async acceptAgent(id: string) {
+  async acceptAgent(id: string, input: AcceptWorkflowAgentInput = { runAsync: false }) {
     const workflow = await findWorkflowOrThrow(id);
     const state = rebuildWorkflowState(workflow);
 
@@ -630,25 +980,106 @@ export const workflowService = {
       throw new AppError(400, "No next agent is available for the current workflow status");
     }
 
-    const nextState = await runNextWorkflowAgent(state);
-    await persistWorkflowOutcome(id, nextState);
+    if (input.runAsync) {
+      enqueueNextAgent(id, state, `Run ${getNextWorkflowAgent(state.status)?.name ?? "next agent"}`);
+      return mapWorkflow(await findWorkflowOrThrow(id));
+    }
+
+    await runNextAndPersist(id, state);
 
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
-  async rerunAgent(id: string) {
+  async rerunAgent(id: string, input: RerunWorkflowAgentInput = { runAsync: false }) {
     const workflow = await findWorkflowOrThrow(id);
     const state = rebuildWorkflowState(workflow);
 
     if (state.status === "created") {
-      const nextState = await runNextWorkflowAgent(state);
-      await persistWorkflowOutcome(id, nextState);
+      if (input.runAsync) {
+        enqueueNextAgent(id, state, "Run first workflow agent");
+        return mapWorkflow(await findWorkflowOrThrow(id));
+      }
+
+      await runNextAndPersist(id, state);
 
       return mapWorkflow(await findWorkflowOrThrow(id));
     }
 
-    const nextState = await rerunCompletedWorkflowAgent(state);
-    await persistWorkflowOutcome(id, nextState);
+    const rerunBaseState = input.agentType
+      ? clearOutputsFromAgent(state, input.agentType as WorkflowAgentType)
+      : state;
+    if (input.runAsync && input.agentType) {
+      enqueueNextAgent(id, rerunBaseState, `Rerun ${input.agentType}`);
+      return mapWorkflow(await findWorkflowOrThrow(id));
+    }
+
+    const nextState = input.agentType
+      ? await runNextWorkflowAgent(rerunBaseState)
+      : await rerunCompletedWorkflowAgent(rerunBaseState);
+    if (input.agentType) {
+      const rerunIndex = getAgentSequenceIndex(input.agentType as WorkflowAgentType);
+      nextState.workflowMeta = {
+        ...(nextState.workflowMeta ?? {}),
+        staleAgentTypes: workflowAgentSequence.slice(rerunIndex + 1).map((agent) => agent.type)
+      };
+    } else {
+      const rerunAgent = getAgentForCompletedStatus(state.status);
+      nextState.workflowMeta = {
+        ...(nextState.workflowMeta ?? {}),
+        reruns: [
+          ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
+          {
+            agentType: rerunAgent?.type,
+            invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
+            invalidatedTrace: rerunAgent
+              ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
+              : [],
+            createdAt: nowIso()
+          }
+        ]
+      };
+    }
+    const versionedState = input.agentType
+      ? addAgentVersionMeta(nextState, input.agentType as WorkflowAgentType, "agent_run")
+      : nextState;
+    await persistWorkflowOutcome(id, versionedState);
+
+    return mapWorkflow(await findWorkflowOrThrow(id));
+  },
+
+  async updateAgentOutput(id: string, input: UpdateWorkflowOutputInput) {
+    const workflow = await findWorkflowOrThrow(id);
+    const state = rebuildWorkflowState(workflow);
+
+    if (state.status === "failed") {
+      throw new AppError(400, "Failed workflow output cannot be edited until the failing agent is rerun");
+    }
+
+    if (workflow.status === "WAITING_FOR_REVIEW" || workflow.status === "REVIEWED") {
+      throw new AppError(400, "Submitted or reviewed workflows cannot be edited");
+    }
+
+    const updatedState = addAgentVersionMeta(
+      replaceAgentOutput(state, input),
+      input.agentType as WorkflowAgentType,
+      "developer_edit"
+    );
+    await persistWorkflowOutcome(id, updatedState);
+    await prisma.traceLog.create({
+      data: {
+        workflowRunId: id,
+        level: "INFO",
+        message: `Developer edited ${input.agentType} output`,
+        metadata: {
+          action: "Developer edited agent output",
+          agentType: input.agentType,
+          note: input.note,
+          stateField: dbStateFieldByAgentType[input.agentType as WorkflowAgentType],
+          nextStatus: stateStatusByAgentType[input.agentType as WorkflowAgentType],
+          createdAt: nowIso()
+        }
+      }
+    });
 
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
@@ -705,6 +1136,18 @@ export const workflowService = {
       throw new AppError(404, "Mentor not found");
     }
 
+    const nextStatus = input.decision === "NEED_MORE_INFORMATION" ? "MENTOR_DRAFT_READY" : "REVIEWED";
+    const workflowMeta = getWorkflowMeta(workflow.state?.inputTicket);
+    const reviewRequests = [
+      ...(((workflowMeta.reviewRequests as unknown[]) ?? [])),
+      {
+        decision: input.decision,
+        comment: input.comment,
+        mentorId: mentor.id,
+        createdAt: nowIso()
+      }
+    ];
+
     await prisma.$transaction([
       prisma.mentorReview.upsert({
         where: { workflowRunId: workflow.id },
@@ -724,13 +1167,20 @@ export const workflowService = {
       prisma.workflowRun.update({
         where: { id: workflow.id },
         data: {
-          status: "REVIEWED",
+          status: nextStatus,
           currentAgent: null
         }
       }),
       prisma.workflowState.update({
         where: { workflowRunId: workflow.id },
         data: {
+          inputTicket: toJsonValue({
+            ...((workflow.state?.inputTicket as Record<string, unknown>) ?? {}),
+            workflowMeta: {
+              ...workflowMeta,
+              reviewRequests
+            }
+          }),
           reviewDecision: {
             decision: input.decision,
             comment: input.comment,
@@ -744,7 +1194,8 @@ export const workflowService = {
           level: "INFO",
           message: `Mentor review submitted: ${input.decision}`,
           metadata: {
-            mentorId: mentor.id
+            mentorId: mentor.id,
+            nextStatus
           }
         }
       })
