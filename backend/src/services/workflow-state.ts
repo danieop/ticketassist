@@ -164,6 +164,7 @@ export type TicketWorkflowState = {
   mentorDraft?: MentorDraft;
   errors: WorkflowError[];
   trace: WorkflowTraceEntry[];
+  workflowMeta?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 };

@@ -40,6 +40,28 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
+.button-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: button-spin 700ms linear infinite;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-shell {
   width: min(100%, 1440px);
   margin: 0 auto;
@@ -1400,6 +1422,18 @@ button {
   font-size: 13px;
 }
 
+.agent-detail-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-detail-heading-row h3 {
+  margin: 0;
+}
+
 .agent-detail-grid ol {
   display: grid;
   gap: 6px;
@@ -1491,6 +1525,44 @@ button {
   word-break: break-word;
 }
 
+.agent-inline-json-editor {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  background: #1e1e1e;
+}
+
+.agent-inline-json-editor textarea,
+.agent-inline-json-editor input {
+  width: 100%;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #111827;
+  color: #d4d4d4;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.agent-inline-json-editor textarea {
+  min-height: 260px;
+  padding: 10px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.agent-inline-json-editor input {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.agent-inline-json-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .json-token-key {
   color: #9cdcfe;
 }
@@ -1525,16 +1597,88 @@ button {
   grid-column: 1 / -1;
 }
 
+.workflow-audit-panel {
+  grid-column: 1 / -1;
+}
+
+.workflow-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.workflow-audit-grid > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcff;
+}
+
+.workflow-audit-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-audit-grid strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 20px;
+}
+
 .workflow-table {
   display: grid;
   gap: 8px;
   overflow-x: auto;
 }
 
+.workflow-dashboard-panel {
+  margin-top: 18px;
+}
+
+.workflow-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.workflow-dashboard-grid > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcff;
+}
+
+.workflow-dashboard-grid span,
+.workflow-toggle-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-dashboard-grid strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.workflow-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-toggle-row input {
+  width: 16px;
+  height: 16px;
+}
+
 .workflow-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1.5fr) minmax(140px, 0.8fr) auto minmax(130px, 0.7fr);
-  gap: 12px;
+  grid-template-columns: minmax(300px, 1.7fr) minmax(150px, 0.8fr) 180px 150px;
+  gap: 14px;
   align-items: center;
   min-width: 840px;
   border: 1px solid var(--line);
@@ -1550,9 +1694,69 @@ button {
   background: var(--surface-soft);
 }
 
+.workflow-row-active {
+  border-color: var(--blue);
+  background: #eff6ff;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
 .workflow-row span:first-child {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
   font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-row span:nth-child(2),
+.workflow-row span:nth-child(4) {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-row .status-badge {
+  justify-self: start;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.workflow-row-skeleton {
+  pointer-events: none;
+}
+
+.workflow-row-skeleton span {
+  display: block;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e9edf5 0%, #f7f9fc 45%, #e9edf5 90%);
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1100ms ease-in-out infinite;
+}
+
+.workflow-row-skeleton span:first-child {
+  width: min(100%, 340px);
+}
+
+.workflow-row-skeleton span:nth-child(2) {
+  width: 130px;
+}
+
+.workflow-row-skeleton span:nth-child(3) {
+  width: 140px;
+}
+
+.workflow-row-skeleton span:nth-child(4) {
+  width: 110px;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    background-position: -220% 0;
+  }
 }
 
 .mentor-queue-shell {

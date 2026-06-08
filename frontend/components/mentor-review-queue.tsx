@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 import { StatusBadge } from "./status-badge";
 import {
   apiBaseUrl,
@@ -13,7 +14,7 @@ import {
 const reviewDecisions: { value: ReviewDecision; label: string }[] = [
   { value: "APPROVED", label: "Approve" },
   { value: "REJECTED", label: "Reject" },
-  { value: "NEED_MORE_INFORMATION", label: "Need more info" }
+  { value: "NEED_MORE_INFORMATION", label: "Request changes" }
 ];
 
 function getErrorMessage(error: unknown) {
@@ -107,7 +108,11 @@ export function MentorReviewQueue() {
       setSelectedWorkflowId("");
       setComment("");
       setDecision("APPROVED");
-      setMessage(`Review submitted: ${reviewedWorkflow.mentorReview?.decision ?? decision}.`);
+      setMessage(
+        decision === "NEED_MORE_INFORMATION"
+          ? "Changes requested. The workflow was returned to the developer."
+          : `Review submitted: ${reviewedWorkflow.mentorReview?.decision ?? decision}.`
+      );
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -131,6 +136,7 @@ export function MentorReviewQueue() {
               <h2>{workflows.length} pending</h2>
             </div>
             <button className="secondary-action compact-action" disabled={isLoading} onClick={() => void loadQueue()} type="button">
+              {isLoading ? <LoadingSpinner /> : null}
               {isLoading ? "Loading" : "Refresh"}
             </button>
           </div>
@@ -222,13 +228,14 @@ export function MentorReviewQueue() {
                       <span>Comment</span>
                       <textarea
                         onChange={(event) => setComment(event.target.value)}
-                        placeholder="Approval notes, rejection reason, or missing information."
+                        placeholder="Approval notes, rejection reason, or requested developer changes."
                         required
                         rows={6}
                         value={comment}
                       />
                     </label>
                     <button className="primary-action" disabled={isReviewing} type="submit">
+                      {isReviewing ? <LoadingSpinner /> : null}
                       {isReviewing ? "Submitting" : "Submit decision"}
                     </button>
                   </form>

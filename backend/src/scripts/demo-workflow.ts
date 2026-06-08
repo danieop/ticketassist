@@ -1,10 +1,11 @@
 import { workflowService } from "../services/workflow.service.js";
 
 async function main() {
-  const workflow = await workflowService.create({
+  let workflow = await workflowService.create({
     retrievalStrategy: "hybrid",
     forceReindex: false,
     maxResults: 3,
+    runAsync: false,
     ticket: {
       title: "User cannot submit checkout form after entering coupon code",
       description:
@@ -13,6 +14,10 @@ async function main() {
       source: "MANUAL"
     }
   });
+
+  while (workflow.nextAgent) {
+    workflow = await workflowService.acceptAgent(workflow.id, { runAsync: false });
+  }
 
   const agentStatuses = workflow.agents.map((agent) => `${agent.agent.type}:${agent.status}`);
 

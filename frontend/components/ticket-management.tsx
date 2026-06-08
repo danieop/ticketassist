@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LoadingSpinner } from "./loading-spinner";
 
 type TicketSource = "EMAIL" | "SLACK" | "ZENDESK" | "JIRA" | "MANUAL";
 
@@ -268,6 +269,7 @@ export function TicketManagement() {
         </div>
         <div className="ticket-toolbar-actions">
           <button className="secondary-action compact-action" disabled={isLoading} onClick={() => void loadTickets()} type="button">
+            {isLoading ? <LoadingSpinner /> : null}
             {isLoading ? "Loading" : "Refresh"}
           </button>
           <button className="primary-action compact-action" onClick={startCreate} type="button">
@@ -306,7 +308,8 @@ export function TicketManagement() {
               </select>
             </label>
             <button className="secondary-action" disabled={isLoading} type="submit">
-              Apply
+              {isLoading ? <LoadingSpinner /> : null}
+              {isLoading ? "Applying" : "Apply"}
             </button>
           </form>
 
@@ -345,7 +348,8 @@ export function TicketManagement() {
                 onClick={() => void deleteTicket(selectedTicket)}
                 type="button"
               >
-                Delete
+                {isSaving ? <LoadingSpinner /> : null}
+                {isSaving ? "Deleting" : "Delete"}
               </button>
             ) : null}
           </div>
@@ -407,6 +411,7 @@ export function TicketManagement() {
             </div>
             <div className="ticket-editor-actions">
               <button className="primary-action" disabled={isSaving} type="submit">
+                {isSaving ? <LoadingSpinner /> : null}
                 {isSaving ? "Saving" : selectedTicket ? "Update ticket" : "Create ticket"}
               </button>
               <button className="secondary-action" onClick={startCreate} type="button">
