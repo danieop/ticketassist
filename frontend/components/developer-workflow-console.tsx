@@ -969,6 +969,20 @@ export function DeveloperWorkflowConsole() {
               <h2>{repoSearch?.results?.length ?? 0} matches</h2>
             </div>
             <p className="query-line">{repoSearch?.semanticQuery}</p>
+            <div className="workflow-dashboard-grid">
+              <div>
+                <span>Graph nodes</span>
+                <strong>{repoSearch?.dependencyGraph?.nodes.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Graph edges</span>
+                <strong>{repoSearch?.dependencyGraph?.edges.length ?? 0}</strong>
+              </div>
+              <div>
+                <span>Memory matches</span>
+                <strong>{repoSearch?.memoryMatches?.length ?? 0}</strong>
+              </div>
+            </div>
             <ul className="file-list">
               {(codeContext?.relevantFiles ?? repoSearch?.results ?? []).slice(0, 6).map((result) => (
                 <li key={`${result.filePath}-${result.startLine ?? 0}`}>
@@ -977,6 +991,8 @@ export function DeveloperWorkflowConsole() {
                 </li>
               ))}
             </ul>
+            {codeContext?.graphContext ? <p className="muted-text">{codeContext.graphContext.summary}</p> : null}
+            {codeContext?.memoryContext ? <p className="muted-text">{codeContext.memoryContext.summary}</p> : null}
           </article>
 
           <article className="panel">
@@ -985,11 +1001,35 @@ export function DeveloperWorkflowConsole() {
               <h2>{fixProposal?.title}</h2>
             </div>
             <p className="muted-text">{fixProposal?.recommendedApproach}</p>
+            <div className="workflow-dashboard-grid">
+              <div>
+                <span>Patch mode</span>
+                <strong>{fixProposal?.patchProposal?.applyMode ?? "none"}</strong>
+              </div>
+              <div>
+                <span>Test framework</span>
+                <strong>{fixProposal?.testPlan?.framework ?? "unknown"}</strong>
+              </div>
+              <div>
+                <span>Verification</span>
+                <strong>{fixProposal?.verificationReport?.status ?? "not_run"}</strong>
+              </div>
+            </div>
             <ul className="clean-list">
               {(fixProposal?.verificationSteps ?? []).map((step) => (
                 <li key={step}>{step}</li>
               ))}
             </ul>
+            {fixProposal?.patchProposal?.targetFiles.length ? (
+              <p className="muted-text">Patch targets: {fixProposal.patchProposal.targetFiles.slice(0, 3).join(", ")}</p>
+            ) : null}
+            {fixProposal?.testPlan?.cases.length ? (
+              <ul className="clean-list">
+                {fixProposal.testPlan.cases.map((testCase) => (
+                  <li key={testCase.name}>{testCase.name}</li>
+                ))}
+              </ul>
+            ) : null}
           </article>
 
           <section className="panel mentor-submit-panel">
