@@ -101,6 +101,13 @@ const workflowInclude = {
   }
 } as const;
 
+const workflowSummaryInclude = {
+  ticket: true,
+  repository: true,
+  state: true,
+  mentorReview: true
+} as const;
+
 const dbStatusByWorkflowStatus: Record<
   WorkflowStatus,
   | "CREATED"
@@ -349,6 +356,13 @@ function getWorkflowProgress(status: WorkflowStatus) {
 }
 
 function getNextAgentSummary(status: WorkflowStatus) {
+  if (status === "ticket_analyzed") {
+    return {
+      name: "PriorityClassifierAgent + RepoSearchAgent",
+      type: "PRIORITY_CLASSIFIER"
+    };
+  }
+
   const nextAgent = getNextWorkflowAgent(status);
 
   if (!nextAgent) {
@@ -616,6 +630,47 @@ function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) 
   };
 }
 
+function mapWorkflowSummary(workflow: Prisma.WorkflowRunGetPayload<{ include: typeof workflowSummaryInclude }>) {
+  const apiStatus = toApiStatus(workflow.status) as WorkflowStatus;
+
+  return {
+    id: workflow.id,
+    status: apiStatus,
+    startedAt: workflow.startedAt,
+    finishedAt: workflow.finishedAt,
+    currentAgent: workflow.currentAgent,
+    progress: getWorkflowProgress(apiStatus),
+    nextAgent: getNextAgentSummary(apiStatus),
+    requiresDeveloperDecision:
+      workflow.status !== "FAILED" &&
+      workflow.status !== "WAITING_FOR_REVIEW" &&
+      workflow.status !== "REVIEWED" &&
+      getWorkflowProgress(apiStatus).completedAgentCount > 0,
+    workflowMeta: getWorkflowMeta(workflow.state?.inputTicket),
+    ticket: {
+      id: workflow.ticket.id,
+      title: workflow.ticket.title,
+      reporterName: workflow.ticket.reporterName,
+      source: workflow.ticket.source,
+      createdAt: workflow.ticket.createdAt
+    },
+    repository: workflow.repository
+      ? {
+          id: workflow.repository.id,
+          name: workflow.repository.name,
+          status: workflow.repository.status,
+          fileCount: workflow.repository.fileCount
+        }
+      : null,
+    mentorReview: workflow.mentorReview
+      ? {
+          decision: workflow.mentorReview.decision,
+          reviewedAt: workflow.mentorReview.reviewedAt
+        }
+      : null
+  };
+}
+
 async function findWorkflowOrThrow(id: string) {
   const workflow = await prisma.workflowRun.findUnique({
     where: { id },
@@ -651,6 +706,53 @@ function enqueueNextAgent(workflowRunId: string, state: TicketWorkflowState, lab
     workflowRunId,
     label,
     run: () => runNextAndPersist(workflowRunId, state)
+  });
+}
+
+function enqueueRerunAgent(
+  workflowRunId: string,
+  state: TicketWorkflowState,
+  input: RerunWorkflowAgentInput,
+  label: string
+) {
+  return workflowJobQueue.enqueue({
+    workflowRunId,
+    label,
+    run: async () => {
+      const nextState = input.agentType
+        ? await runNextWorkflowAgent(state)
+        : await rerunCompletedWorkflowAgent(state);
+
+      if (input.agentType) {
+        const rerunIndex = getAgentSequenceIndex(input.agentType as WorkflowAgentType);
+        nextState.workflowMeta = {
+          ...(nextState.workflowMeta ?? {}),
+          staleAgentTypes: workflowAgentSequence.slice(rerunIndex + 1).map((agent) => agent.type)
+        };
+      } else {
+        const rerunAgent = getAgentForCompletedStatus(state.status);
+        nextState.workflowMeta = {
+          ...(nextState.workflowMeta ?? {}),
+          reruns: [
+            ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
+            {
+              agentType: rerunAgent?.type,
+              invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
+              invalidatedTrace: rerunAgent
+                ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
+                : [],
+              createdAt: nowIso()
+            }
+          ]
+        };
+      }
+
+      const versionedState = input.agentType
+        ? addAgentVersionMeta(nextState, input.agentType as WorkflowAgentType, "agent_run")
+        : nextState;
+
+      await persistWorkflowOutcome(workflowRunId, versionedState);
+    }
   });
 }
 
@@ -864,6 +966,46 @@ export const workflowService = {
     return workflows.map((workflow) => mapWorkflow(workflow));
   },
 
+  async listSummaries(input: { status?: string; limit?: number; page?: number; search?: string } = {}) {
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 100);
+    const page = Math.max(input.page ?? 1, 1);
+    const search = input.search?.trim();
+    const where: Prisma.WorkflowRunWhereInput = {
+      ...(input.status ? { status: input.status.toUpperCase() as DbWorkflowStatus } : {}),
+      ...(search
+        ? {
+            ticket: {
+              title: {
+                contains: search,
+                mode: "insensitive"
+              }
+            }
+          }
+        : {})
+    };
+
+    const [workflows, total] = await Promise.all([
+      prisma.workflowRun.findMany({
+        where,
+        include: workflowSummaryInclude,
+        orderBy: {
+          startedAt: "desc"
+        },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.workflowRun.count({ where })
+    ]);
+
+    return {
+      items: workflows.map((workflow) => mapWorkflowSummary(workflow)),
+      page,
+      limit,
+      total,
+      totalPages: Math.max(Math.ceil(total / limit), 1)
+    };
+  },
+
   async create(input: CreateWorkflowInput) {
     await ensureDefaultAgents();
     const repositoryId =
@@ -961,13 +1103,7 @@ export const workflowService = {
       updatedAt: timestamp
     };
 
-    if (input.runAsync) {
-      enqueueNextAgent(created.run.id, initialState, "Run first workflow agent");
-      return mapWorkflow(await findWorkflowOrThrow(created.run.id));
-    }
-
-    await runNextAndPersist(created.run.id, initialState);
-
+    enqueueNextAgent(created.run.id, initialState, "Run first workflow agent");
     return mapWorkflow(await findWorkflowOrThrow(created.run.id));
   },
 
@@ -991,13 +1127,7 @@ export const workflowService = {
       throw new AppError(400, "No next agent is available for the current workflow status");
     }
 
-    if (input.runAsync) {
-      enqueueNextAgent(id, state, `Run ${getNextWorkflowAgent(state.status)?.name ?? "next agent"}`);
-      return mapWorkflow(await findWorkflowOrThrow(id));
-    }
-
-    await runNextAndPersist(id, state);
-
+    enqueueNextAgent(id, state, `Run ${getNextWorkflowAgent(state.status)?.name ?? "next agent"}`);
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
@@ -1006,55 +1136,14 @@ export const workflowService = {
     const state = rebuildWorkflowState(workflow);
 
     if (state.status === "created") {
-      if (input.runAsync) {
-        enqueueNextAgent(id, state, "Run first workflow agent");
-        return mapWorkflow(await findWorkflowOrThrow(id));
-      }
-
-      await runNextAndPersist(id, state);
-
+      enqueueNextAgent(id, state, "Run first workflow agent");
       return mapWorkflow(await findWorkflowOrThrow(id));
     }
 
     const rerunBaseState = input.agentType
       ? clearOutputsFromAgent(state, input.agentType as WorkflowAgentType)
       : state;
-    if (input.runAsync && input.agentType) {
-      enqueueNextAgent(id, rerunBaseState, `Rerun ${input.agentType}`);
-      return mapWorkflow(await findWorkflowOrThrow(id));
-    }
-
-    const nextState = input.agentType
-      ? await runNextWorkflowAgent(rerunBaseState)
-      : await rerunCompletedWorkflowAgent(rerunBaseState);
-    if (input.agentType) {
-      const rerunIndex = getAgentSequenceIndex(input.agentType as WorkflowAgentType);
-      nextState.workflowMeta = {
-        ...(nextState.workflowMeta ?? {}),
-        staleAgentTypes: workflowAgentSequence.slice(rerunIndex + 1).map((agent) => agent.type)
-      };
-    } else {
-      const rerunAgent = getAgentForCompletedStatus(state.status);
-      nextState.workflowMeta = {
-        ...(nextState.workflowMeta ?? {}),
-        reruns: [
-          ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
-          {
-            agentType: rerunAgent?.type,
-            invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
-            invalidatedTrace: rerunAgent
-              ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
-              : [],
-            createdAt: nowIso()
-          }
-        ]
-      };
-    }
-    const versionedState = input.agentType
-      ? addAgentVersionMeta(nextState, input.agentType as WorkflowAgentType, "agent_run")
-      : nextState;
-    await persistWorkflowOutcome(id, versionedState);
-
+    enqueueRerunAgent(id, rerunBaseState, input, input.agentType ? `Rerun ${input.agentType}` : "Rerun completed agent");
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 

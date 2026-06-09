@@ -8,9 +8,10 @@ import {
   formatDateTime,
   getResponseErrorMessage,
   type ReviewDecision,
-  type WorkflowApi
+  type WorkflowApi,
+  type WorkflowSummaryApi
 } from "@/lib/workflow-api";
-import { getAuthHeaders } from "@/lib/auth-client";
+import { authFetch } from "@/lib/auth-client";
 
 const reviewDecisions: { value: ReviewDecision; label: string }[] = [
   { value: "APPROVED", label: "Approve" },
@@ -38,7 +39,8 @@ function getStoredMentorId() {
 }
 
 export function MentorReviewQueue() {
-  const [workflows, setWorkflows] = useState<WorkflowApi[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowSummaryApi[]>([]);
+  const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowApi | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [decision, setDecision] = useState<ReviewDecision>("APPROVED");
   const [comment, setComment] = useState("");
@@ -46,24 +48,37 @@ export function MentorReviewQueue() {
   const [isLoading, setIsLoading] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
 
-  const selectedWorkflow = useMemo(
+  const selectedWorkflowSummary = useMemo(
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? workflows[0] ?? null,
     [workflows, selectedWorkflowId]
   );
 
-  const loadQueue = async () => {
-    setIsLoading(true);
-
+  const loadWorkflowDetail = async (id: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows?status=waiting_for_review&limit=50`, {
-        headers: getAuthHeaders()
-      });
+      const response = await authFetch(`${apiBaseUrl}/api/workflows/${id}`);
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
       }
 
-      const data = (await response.json()) as WorkflowApi[];
+      setSelectedWorkflow((await response.json()) as WorkflowApi);
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+      setSelectedWorkflow(null);
+    }
+  };
+
+  const loadQueue = async () => {
+    setIsLoading(true);
+
+    try {
+      const response = await authFetch(`${apiBaseUrl}/api/workflows?status=waiting_for_review&limit=50`);
+
+      if (!response.ok) {
+        throw new Error(await getResponseErrorMessage(response));
+      }
+
+      const data = (await response.json()) as WorkflowSummaryApi[];
       setWorkflows(data);
 
       if (!selectedWorkflowId && data[0]) {
@@ -82,6 +97,17 @@ export function MentorReviewQueue() {
     void loadQueue();
   }, []);
 
+  useEffect(() => {
+    const nextId = selectedWorkflowId || selectedWorkflowSummary?.id;
+
+    if (!nextId) {
+      setSelectedWorkflow(null);
+      return;
+    }
+
+    void loadWorkflowDetail(nextId);
+  }, [selectedWorkflowId, selectedWorkflowSummary?.id]);
+
   const submitReview = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -92,9 +118,9 @@ export function MentorReviewQueue() {
     setIsReviewing(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows/${selectedWorkflow.id}/review`, {
+      const response = await authFetch(`${apiBaseUrl}/api/workflows/${selectedWorkflow.id}/review`, {
         method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           decision,
           comment: comment.trim(),
@@ -146,7 +172,7 @@ export function MentorReviewQueue() {
           <div className="mentor-queue-list">
             {workflows.map((workflow) => (
               <button
-                className={`mentor-queue-item ${workflow.id === selectedWorkflow?.id ? "mentor-queue-item-active" : ""}`}
+                className={`mentor-queue-item ${workflow.id === selectedWorkflowSummary?.id ? "mentor-queue-item-active" : ""}`}
                 key={workflow.id}
                 onClick={() => setSelectedWorkflowId(workflow.id)}
                 type="button"

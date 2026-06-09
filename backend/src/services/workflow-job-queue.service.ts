@@ -65,6 +65,12 @@ export const workflowJobQueue = {
   stats() {
     return {
       pending: pendingJobs.length,
+      pendingJobs: pendingJobs.map((job) => ({
+        id: job.id,
+        workflowRunId: job.workflowRunId,
+        label: job.label,
+        createdAt: job.createdAt
+      })),
       active: activeJob
         ? {
             id: activeJob.id,

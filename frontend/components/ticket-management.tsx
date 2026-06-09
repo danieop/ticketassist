@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LoadingSpinner } from "./loading-spinner";
-import { getAuthHeaders } from "@/lib/auth-client";
+import { authFetch } from "@/lib/auth-client";
 
 type TicketSource = "EMAIL" | "SLACK" | "ZENDESK" | "JIRA" | "MANUAL";
 
@@ -118,9 +118,7 @@ export function TicketManagement() {
       }
 
       const query = params.toString();
-      const response = await fetch(`${apiBaseUrl}/api/tickets${query ? `?${query}` : ""}`, {
-        headers: getAuthHeaders()
-      });
+      const response = await authFetch(`${apiBaseUrl}/api/tickets${query ? `?${query}` : ""}`);
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -143,9 +141,7 @@ export function TicketManagement() {
 
   const loadDefaultCodebase = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/repositories`, {
-        headers: getAuthHeaders()
-      });
+      const response = await authFetch(`${apiBaseUrl}/api/repositories`);
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -200,11 +196,11 @@ export function TicketManagement() {
         source: form.source
       };
 
-      const response = await fetch(
+      const response = await authFetch(
         selectedTicket ? `${apiBaseUrl}/api/tickets/${selectedTicket.id}` : `${apiBaseUrl}/api/tickets`,
         {
           method: selectedTicket ? "PATCH" : "POST",
-          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         }
       );
@@ -239,9 +235,8 @@ export function TicketManagement() {
     setIsSaving(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/tickets/${ticket.id}`, {
-        method: "DELETE",
-        headers: getAuthHeaders()
+      const response = await authFetch(`${apiBaseUrl}/api/tickets/${ticket.id}`, {
+        method: "DELETE"
       });
 
       if (!response.ok) {

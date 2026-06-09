@@ -225,6 +225,50 @@ export type WorkflowApi = {
   } | null;
 };
 
+export type WorkflowSummaryApi = {
+  id: string;
+  status: WorkflowStatus;
+  startedAt: string;
+  finishedAt?: string | null;
+  currentAgent?: string | null;
+  progress?: {
+    completedAgentCount: number;
+    totalAgentCount: number;
+    percent: number;
+  };
+  nextAgent?: {
+    name: string;
+    type: string;
+  } | null;
+  workflowMeta?: WorkflowApi["workflowMeta"];
+  requiresDeveloperDecision?: boolean;
+  ticket: {
+    id: string;
+    title: string;
+    reporterName: string;
+    source: TicketSource;
+    createdAt: string;
+  };
+  repository?: {
+    id: string;
+    name: string;
+    status: string;
+    fileCount: number;
+  } | null;
+  mentorReview?: {
+    decision: ReviewDecision;
+    reviewedAt: string;
+  } | null;
+};
+
+export type WorkflowSummaryPageApi = {
+  items: WorkflowSummaryApi[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
 export type WorkflowDashboardApi = {
   workflowsByStatus: Record<string, number>;
   averageAgentLatencyMs: number;
@@ -236,9 +280,17 @@ export type WorkflowDashboardApi = {
   mentorDecisions: Record<string, number>;
   queue: {
     pending: number;
-    active?: {
+    pendingJobs: {
+      id: string;
       workflowRunId: string;
       label: string;
+      createdAt: string;
+    }[];
+    active?: {
+      id?: string;
+      workflowRunId: string;
+      label: string;
+      createdAt?: string;
     } | null;
     completed: unknown[];
     failed: unknown[];

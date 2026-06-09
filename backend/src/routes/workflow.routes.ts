@@ -3,6 +3,7 @@ import {
   createWorkflow,
   getWorkflowDashboard,
   getWorkflow,
+  listWorkflowSummaries,
   listWorkflows,
   acceptWorkflowAgent,
   rerunWorkflowAgent,
@@ -36,6 +37,7 @@ workflowRouter.use(requireAuth);
 workflowRouter.post("/", requireRole("DEVELOPER", "ADMIN"), createWorkflow);
 workflowRouter.get("/", listWorkflows);
 workflowRouter.get("/dashboard", getWorkflowDashboard);
+workflowRouter.get("/summaries", listWorkflowSummaries);
 
 /**
  * @openapi

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation"; // Dùng next/navigation cho App Router
 
 type RoleKey = "developer" | "mentor" | "admin";
@@ -9,6 +9,12 @@ type RoleKey = "developer" | "mentor" | "admin";
 type RoleDashboardProps = {
   role: RoleKey;
   children?: ReactNode;
+};
+
+type DashboardHeaderEventDetail = {
+  title?: string;
+  description?: string;
+  loading?: boolean;
 };
 
 const dashboards = {
@@ -122,6 +128,24 @@ const dashboards = {
 export function RoleDashboard({ role, children }: RoleDashboardProps) {
   const dashboard = dashboards[role];
   const router = useRouter();
+  const [headerOverride, setHeaderOverride] = useState<DashboardHeaderEventDetail>({});
+
+  useEffect(() => {
+    setHeaderOverride({});
+
+    const updateHeader = (event: Event) => {
+      setHeaderOverride((event as CustomEvent<DashboardHeaderEventDetail>).detail ?? {});
+    };
+
+    window.addEventListener("ticketassist:dashboard-header", updateHeader);
+
+    return () => {
+      window.removeEventListener("ticketassist:dashboard-header", updateHeader);
+    };
+  }, [role]);
+
+  const headerTitle = headerOverride.title ?? dashboard.title;
+  const headerDescription = headerOverride.description ?? dashboard.description;
 
 const handleSwitchAccount = async (e: React.MouseEvent) => {
   e.preventDefault();
@@ -146,8 +170,8 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
       <header className="role-header">
         <div>
           <p className="eyebrow">{dashboard.eyebrow}</p>
-          <h1>{dashboard.title}</h1>
-          <p>{dashboard.description}</p>
+          {headerOverride.loading ? <span className="role-title-skeleton" /> : <h1>{headerTitle}</h1>}
+          <p>{headerDescription}</p>
         </div>
         <div className="topbar-actions">
           <Link className="secondary-action" href="/tickets">

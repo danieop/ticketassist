@@ -28,7 +28,7 @@ const envSchema = z.object({
   CLIENT_ORIGIN: z.string().trim().min(1).default("http://localhost:3000"),
   JWT_SECRET: z.string().trim().min(16, "JWT_SECRET must be at least 16 characters"),
   JWT_EXPIRES_IN: z.string().trim().min(1).default("7d"),
-  JWT_ACCESS_EXPIRES_IN: z.string().trim().min(1).default("15m"),
+  JWT_ACCESS_EXPIRES_IN: z.string().trim().min(1).default("3d"),
   JWT_REFRESH_EXPIRES_IN: z.string().trim().min(1).default("30d"),
   GOOGLE_CLIENT_ID: z.string().trim().optional(),
   AI_BASE_URL: z.string().trim().default("https://api.openai.com/v1"),
