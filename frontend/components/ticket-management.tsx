@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LoadingSpinner } from "./loading-spinner";
+import { getAuthHeaders } from "@/lib/auth-client";
 
 type TicketSource = "EMAIL" | "SLACK" | "ZENDESK" | "JIRA" | "MANUAL";
 
@@ -117,7 +118,9 @@ export function TicketManagement() {
       }
 
       const query = params.toString();
-      const response = await fetch(`${apiBaseUrl}/api/tickets${query ? `?${query}` : ""}`);
+      const response = await fetch(`${apiBaseUrl}/api/tickets${query ? `?${query}` : ""}`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -140,7 +143,9 @@ export function TicketManagement() {
 
   const loadDefaultCodebase = async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/repositories`);
+      const response = await fetch(`${apiBaseUrl}/api/repositories`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -199,7 +204,7 @@ export function TicketManagement() {
         selectedTicket ? `${apiBaseUrl}/api/tickets/${selectedTicket.id}` : `${apiBaseUrl}/api/tickets`,
         {
           method: selectedTicket ? "PATCH" : "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(payload)
         }
       );
@@ -235,7 +240,8 @@ export function TicketManagement() {
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/tickets/${ticket.id}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: getAuthHeaders()
       });
 
       if (!response.ok) {

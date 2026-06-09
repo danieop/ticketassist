@@ -10,8 +10,11 @@ import {
   submitWorkflowForReview,
   reviewWorkflow
 } from "../controllers/workflow.controller.js";
+import { requireAuth, requireRole } from "../middlewares/auth.js";
 
 export const workflowRouter = Router();
+
+workflowRouter.use(requireAuth);
 
 /**
  * @openapi
@@ -30,7 +33,7 @@ export const workflowRouter = Router();
  *       201:
  *         description: Workflow state created
  */
-workflowRouter.post("/", createWorkflow);
+workflowRouter.post("/", requireRole("DEVELOPER", "ADMIN"), createWorkflow);
 workflowRouter.get("/", listWorkflows);
 workflowRouter.get("/dashboard", getWorkflowDashboard);
 
@@ -54,10 +57,10 @@ workflowRouter.get("/dashboard", getWorkflowDashboard);
  *         description: Workflow not found
  */
 workflowRouter.get("/:id", getWorkflow);
-workflowRouter.post("/:id/accept", acceptWorkflowAgent);
-workflowRouter.post("/:id/rerun", rerunWorkflowAgent);
-workflowRouter.patch("/:id/output", updateWorkflowOutput);
-workflowRouter.post("/:id/submit", submitWorkflowForReview);
+workflowRouter.post("/:id/accept", requireRole("DEVELOPER", "ADMIN"), acceptWorkflowAgent);
+workflowRouter.post("/:id/rerun", requireRole("DEVELOPER", "ADMIN"), rerunWorkflowAgent);
+workflowRouter.patch("/:id/output", requireRole("DEVELOPER", "ADMIN"), updateWorkflowOutput);
+workflowRouter.post("/:id/submit", requireRole("DEVELOPER", "ADMIN"), submitWorkflowForReview);
 
 /**
  * @openapi
@@ -82,4 +85,4 @@ workflowRouter.post("/:id/submit", submitWorkflowForReview);
  *       200:
  *         description: Updated workflow with review
  */
-workflowRouter.post("/:id/review", reviewWorkflow);
+workflowRouter.post("/:id/review", requireRole("MENTOR", "ADMIN"), reviewWorkflow);

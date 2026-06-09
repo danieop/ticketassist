@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LoadingSpinner } from "./loading-spinner";
+import { getAccessToken, getAuthHeaders } from "@/lib/auth-client";
 
 type UserRole = "DEVELOPER" | "MENTOR" | "ADMIN";
 type RegistrationStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -25,53 +26,6 @@ type RegistrationRequestRow = {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
-const dummyUsers: UserRow[] = [
-  {
-    id: "usr-demo-admin",
-    name: "Admin TicketAssist",
-    email: "admin@ticketassist.local",
-    role: "ADMIN",
-    createdAt: "2026-06-03T02:00:00.000Z"
-  },
-  {
-    id: "usr-demo-dev",
-    name: "Nguyen Minh",
-    email: "minh.dev@example.com",
-    role: "DEVELOPER",
-    createdAt: "2026-06-02T08:30:00.000Z"
-  },
-  {
-    id: "usr-demo-mentor",
-    name: "Tran Linh",
-    email: "linh.mentor@example.com",
-    role: "MENTOR",
-    createdAt: "2026-06-02T10:15:00.000Z"
-  }
-];
-
-const dummyRequests: RegistrationRequestRow[] = [
-  {
-    id: "req-demo-1",
-    name: "Le An",
-    email: "an.dev@example.com",
-    role: "DEVELOPER",
-    status: "PENDING",
-    createdAt: "2026-06-03T03:10:00.000Z"
-  },
-  {
-    id: "req-demo-2",
-    name: "Pham Ha",
-    email: "ha.mentor@example.com",
-    role: "MENTOR",
-    status: "PENDING",
-    createdAt: "2026-06-03T03:40:00.000Z"
-  }
-];
-
-function getAccessToken() {
-  return localStorage.getItem("ticketassist_access_token") ?? "";
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", {
     month: "short",
@@ -82,15 +36,18 @@ function formatDate(value: string) {
 }
 
 export function AdminUserManagement() {
-  const [users, setUsers] = useState<UserRow[]>(dummyUsers);
-  const [requests, setRequests] = useState<RegistrationRequestRow[]>(dummyRequests);
-  const [status, setStatus] = useState("Showing dummy data until an admin session is available.");
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [requests, setRequests] = useState<RegistrationRequestRow[]>([]);
+  const [status, setStatus] = useState("Loading live admin data.");
   const [isLoading, setIsLoading] = useState(false);
 
   const loadAdminData = async () => {
     const accessToken = getAccessToken();
 
     if (!accessToken) {
+      setUsers([]);
+      setRequests([]);
+      setStatus("Login as an admin to load live user data.");
       return;
     }
 
@@ -99,10 +56,10 @@ export function AdminUserManagement() {
     try {
       const [usersResponse, requestsResponse] = await Promise.all([
         fetch(`${apiBaseUrl}/api/users`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
+          headers: getAuthHeaders()
         }),
         fetch(`${apiBaseUrl}/api/users/registration-requests?status=PENDING`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
+          headers: getAuthHeaders()
         })
       ]);
 
@@ -128,8 +85,7 @@ export function AdminUserManagement() {
     const accessToken = getAccessToken();
 
     if (!accessToken) {
-      setRequests((current) => current.filter((request) => request.id !== id));
-      setStatus(`Dummy request ${decision === "approve" ? "approved" : "rejected"}.`);
+      setStatus("Login as an admin before reviewing registration requests.");
       return;
     }
 
@@ -139,7 +95,7 @@ export function AdminUserManagement() {
       const response = await fetch(`${apiBaseUrl}/api/users/registration-requests/${id}/${decision}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          ...getAuthHeaders(),
           "Content-Type": "application/json"
         },
         body: decision === "reject" ? JSON.stringify({ reason: "Rejected by admin" }) : undefined
@@ -198,6 +154,7 @@ export function AdminUserManagement() {
               </span>
             </div>
           ))}
+          {requests.length === 0 ? <p className="muted-text">No pending registration requests.</p> : null}
         </div>
       </div>
 
@@ -221,6 +178,7 @@ export function AdminUserManagement() {
               <span>{formatDate(user.createdAt)}</span>
             </div>
           ))}
+          {users.length === 0 ? <p className="muted-text">No live users loaded.</p> : null}
         </div>
       </div>
     </section>

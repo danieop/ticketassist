@@ -8,10 +8,12 @@ const rolePaths: Record<UserRole, string> = {
   ADMIN: "/admin"
 };
 
-const protectedPaths: Record<string, UserRole> = {
-  "/developer": "DEVELOPER",
-  "/mentor": "MENTOR",
-  "/admin": "ADMIN"
+const protectedPathRoles: Record<string, UserRole[]> = {
+  "/developer": ["DEVELOPER", "ADMIN"],
+  "/tickets": ["DEVELOPER", "ADMIN"],
+  "/codebase": ["DEVELOPER", "ADMIN"],
+  "/mentor": ["MENTOR", "ADMIN"],
+  "/admin": ["ADMIN"]
 };
 
 function getSession(request: NextRequest) {
@@ -29,36 +31,27 @@ export function middleware(request: NextRequest) {
   const session = getSession(request);
   const pathname = request.nextUrl.pathname;
 
-  // 1. ĐÃ ĐĂNG NHẬP: Chặn không cho vào lại trang Auth hoặc trang chủ
   if ((pathname === "/" || pathname === "/login" || pathname === "/register") && session) {
     return NextResponse.redirect(new URL(rolePaths[session.role], request.url));
   }
 
-  // Lấy role yêu cầu cho route hiện tại
-  // (Sử dụng protectedPaths như code gốc hoặc getRequiredRole như mình gợi ý)
-  const requiredRole = protectedPaths[pathname]; 
+  const allowedRoles = protectedPathRoles[pathname];
 
-  // 2. ROUTE PUBLIC: Các trang không bị khóa (như /, /login, /register)
-  // ĐÂY LÀ BƯỚC QUAN TRỌNG NHẤT: Nếu không yêu cầu role, phải cho qua NGAY LẬP TỨC
-  if (!requiredRole) {
+  if (!allowedRoles) {
     return NextResponse.next();
   }
 
-  // 3. CHƯA ĐĂNG NHẬP: Cố truy cập route bị khóa -> Bắt về /login
-  // Lưu ý: Block này phải nằm DƯỚI block "ROUTE PUBLIC"
   if (!session) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // 4. SAI ROLE: Đã đăng nhập nhưng không có quyền vào route này
-  if (session.role !== requiredRole) {
+  if (!allowedRoles.includes(session.role)) {
     return NextResponse.redirect(new URL(rolePaths[session.role], request.url));
   }
 
-  // 5. Hợp lệ
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/", "/login", "/register", "/developer", "/mentor", "/admin"]
+  matcher: ["/", "/login", "/register", "/developer", "/mentor", "/admin", "/tickets", "/codebase"]
 };

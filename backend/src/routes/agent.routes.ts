@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { listAgents } from "../controllers/agent.controller.js";
+import { requireAuth } from "../middlewares/auth.js";
 
 export const agentRouter = Router();
+
+agentRouter.use(requireAuth);
 
 /**
  * @openapi

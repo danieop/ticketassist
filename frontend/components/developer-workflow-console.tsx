@@ -11,6 +11,7 @@ import {
   type WorkflowApi,
   type WorkflowDashboardApi
 } from "@/lib/workflow-api";
+import { getAuthHeaders } from "@/lib/auth-client";
 
 const agentSteps = [
   { type: "TICKET_ANALYZER", label: "Ticket Analyzer" },
@@ -384,7 +385,9 @@ export function DeveloperWorkflowConsole() {
     setIsLoadingRecent(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows?limit=12`);
+      const response = await fetch(`${apiBaseUrl}/api/workflows?limit=12`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -402,7 +405,9 @@ export function DeveloperWorkflowConsole() {
     setIsLoadingDashboard(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows/dashboard`);
+      const response = await fetch(`${apiBaseUrl}/api/workflows/dashboard`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -485,7 +490,7 @@ export function DeveloperWorkflowConsole() {
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           retrievalStrategy: "hybrid",
           forceReindex: false,
@@ -535,7 +540,7 @@ export function DeveloperWorkflowConsole() {
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/${action}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: action === "accept" || action === "rerun" ? JSON.stringify({ agentType, runAsync }) : undefined
       });
 
@@ -574,7 +579,7 @@ export function DeveloperWorkflowConsole() {
       const parsedOutput = JSON.parse(editingOutput) as unknown;
       const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/output`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           agentType: editingAgentType,
           output: parsedOutput,
@@ -612,7 +617,8 @@ export function DeveloperWorkflowConsole() {
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/submit`, {
-        method: "POST"
+        method: "POST",
+        headers: getAuthHeaders()
       });
 
       if (!response.ok) {

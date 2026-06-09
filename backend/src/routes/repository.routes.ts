@@ -8,8 +8,11 @@ import {
   listRepositories,
   uploadRepository
 } from "../controllers/repository.controller.js";
+import { requireAuth, requireRole } from "../middlewares/auth.js";
 
 export const repositoryRouter = Router();
+
+repositoryRouter.use(requireAuth);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -67,7 +70,7 @@ repositoryRouter.get("/:id/files/content", getRepositoryFileContent);
  *       - Repositories
  *     summary: Build or reuse a PostgreSQL pgvector code index
  */
-repositoryRouter.post("/:id/index", buildRepositoryIndex);
+repositoryRouter.post("/:id/index", requireRole("DEVELOPER", "ADMIN"), buildRepositoryIndex);
 
 /**
  * @openapi
@@ -109,4 +112,4 @@ repositoryRouter.get("/:id", getRepository);
  *       400:
  *         description: Invalid upload
  */
-repositoryRouter.post("/upload", upload.array("files"), uploadRepository);
+repositoryRouter.post("/upload", requireRole("DEVELOPER", "ADMIN"), upload.array("files"), uploadRepository);
