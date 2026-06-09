@@ -911,7 +911,7 @@ export function generateSemanticQuery(input: {
   ticketTitle?: string;
   ticketDescription: string;
   analysis: TicketAnalysis;
-  priority: PriorityClassification;
+  priority?: PriorityClassification;
 }) {
   return [
     input.ticketTitle,
@@ -919,7 +919,7 @@ export function generateSemanticQuery(input: {
     ...input.analysis.keyFacts.slice(0, 5),
     input.analysis.affectedFeature,
     input.analysis.suspectedFlow,
-    `${input.priority.level} priority: ${input.priority.reason}`
+    input.priority ? `${input.priority.level} priority: ${input.priority.reason}` : undefined
   ]
     .filter(Boolean)
     .join("; ")

@@ -313,7 +313,7 @@ function buildLivePromptPreview(type: AgentStepType, workflow: WorkflowApi | nul
 
   if (type === "REPO_SEARCH") {
     return stringifySnapshot({
-      system: "Generate focused repository query terms and run repository search.",
+      system: "Generate focused repository query terms and run repository search from ticket analysis and optional priority.",
       user: input
     });
   }
@@ -526,10 +526,15 @@ export function DeveloperWorkflowConsole() {
         ? workflow.nextAgent?.type
         : agentType ?? [...workflow.agents].sort((left, right) => right.agent.executionOrder - left.agent.executionOrder)[0]?.agent.type;
     const normalizedAgentType = agentSteps.find((step) => step.type === actionAgentType)?.type ?? null;
+    const isParallelPrioritySearch = action === "accept" && workflow.status === "ticket_analyzed";
 
     startLiveAgent(
       normalizedAgentType,
-      action === "accept" ? `Running ${workflow.nextAgent?.name ?? "next agent"}.` : "Rerunning selected agent."
+      isParallelPrioritySearch
+        ? "Running Priority Classifier and Repo Search in parallel."
+        : action === "accept"
+          ? `Running ${workflow.nextAgent?.name ?? "next agent"}.`
+          : "Rerunning selected agent."
     );
 
     try {
