@@ -8,13 +8,13 @@ const rolePaths: Record<UserRole, string> = {
   ADMIN: "/admin"
 };
 
-const protectedPathRoles: Record<string, UserRole[]> = {
-  "/developer": ["DEVELOPER", "ADMIN"],
-  "/tickets": ["DEVELOPER", "ADMIN"],
-  "/codebase": ["DEVELOPER", "ADMIN"],
-  "/mentor": ["MENTOR", "ADMIN"],
-  "/admin": ["ADMIN"]
-};
+const protectedPathRoles: { prefix: string; roles: UserRole[] }[] = [
+  { prefix: "/developer", roles: ["DEVELOPER", "ADMIN"] },
+  { prefix: "/tickets", roles: ["DEVELOPER", "ADMIN"] },
+  { prefix: "/codebase", roles: ["DEVELOPER", "ADMIN"] },
+  { prefix: "/mentor", roles: ["MENTOR", "ADMIN"] },
+  { prefix: "/admin", roles: ["ADMIN"] }
+];
 
 function getSession(request: NextRequest) {
   const accessToken = request.cookies.get("ticketassist_access_token")?.value;
@@ -35,7 +35,9 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL(rolePaths[session.role], request.url));
   }
 
-  const allowedRoles = protectedPathRoles[pathname];
+  const allowedRoles = protectedPathRoles.find(
+    (item) => pathname === item.prefix || pathname.startsWith(`${item.prefix}/`)
+  )?.roles;
 
   if (!allowedRoles) {
     return NextResponse.next();
@@ -53,5 +55,14 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/login", "/register", "/developer", "/mentor", "/admin", "/tickets", "/codebase"]
+  matcher: [
+    "/",
+    "/login",
+    "/register",
+    "/developer/:path*",
+    "/mentor/:path*",
+    "/admin/:path*",
+    "/tickets/:path*",
+    "/codebase/:path*"
+  ]
 };

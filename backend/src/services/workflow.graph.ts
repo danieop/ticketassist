@@ -1262,8 +1262,31 @@ const compiledWorkflowGraph = new StateGraph(WorkflowAnnotation)
   .compile();
 
 export async function runTicketWorkflow(initialState: TicketWorkflowState) {
-  const result = await compiledWorkflowGraph.invoke({ state: initialState });
-  return result.state;
+  const analyzed = (await ticketAnalyzerNode({ state: initialState })).state;
+
+  if (analyzed.status === "failed") {
+    return analyzed;
+  }
+
+  const searched = await runPriorityAndRepoSearchAgents(analyzed);
+
+  if (searched.status === "failed") {
+    return searched;
+  }
+
+  const contextReady = (await codeContextNode({ state: searched })).state;
+
+  if (contextReady.status === "failed") {
+    return contextReady;
+  }
+
+  const fixProposed = (await fixProposalNode({ state: contextReady })).state;
+
+  if (fixProposed.status === "failed") {
+    return fixProposed;
+  }
+
+  return (await mentorDraftNode({ state: fixProposed })).state;
 }
 
 function getStateDelta(base: TicketWorkflowState, next: TicketWorkflowState) {

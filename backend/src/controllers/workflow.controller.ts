@@ -42,6 +42,25 @@ export const listWorkflows: RequestHandler = async (request, response, next) => 
   }
 };
 
+export const listWorkflowSummaries: RequestHandler = async (request, response, next) => {
+  try {
+    const status = typeof request.query.status === "string" ? request.query.status : undefined;
+    const search = typeof request.query.search === "string" ? request.query.search : undefined;
+    const limit = typeof request.query.limit === "string" ? Number(request.query.limit) : undefined;
+    const page = typeof request.query.page === "string" ? Number(request.query.page) : undefined;
+    const workflows = await workflowService.listSummaries({
+      status,
+      search,
+      limit: Number.isFinite(limit) && limit ? limit : undefined,
+      page: Number.isFinite(page) && page ? page : undefined
+    });
+
+    response.json(workflows);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getWorkflow: RequestHandler = async (request, response, next) => {
   try {
     const workflow = await workflowService.getById(getParamId(request.params.id));

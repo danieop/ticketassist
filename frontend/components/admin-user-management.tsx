@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LoadingSpinner } from "./loading-spinner";
-import { getAccessToken, getAuthHeaders } from "@/lib/auth-client";
+import { authFetch, getAccessToken } from "@/lib/auth-client";
 
 type UserRole = "DEVELOPER" | "MENTOR" | "ADMIN";
 type RegistrationStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -55,12 +55,8 @@ export function AdminUserManagement() {
 
     try {
       const [usersResponse, requestsResponse] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/users`, {
-          headers: getAuthHeaders()
-        }),
-        fetch(`${apiBaseUrl}/api/users/registration-requests?status=PENDING`, {
-          headers: getAuthHeaders()
-        })
+        authFetch(`${apiBaseUrl}/api/users`),
+        authFetch(`${apiBaseUrl}/api/users/registration-requests?status=PENDING`)
       ]);
 
       if (!usersResponse.ok || !requestsResponse.ok) {
@@ -92,10 +88,9 @@ export function AdminUserManagement() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/users/registration-requests/${id}/${decision}`, {
+      const response = await authFetch(`${apiBaseUrl}/api/users/registration-requests/${id}/${decision}`, {
         method: "POST",
         headers: {
-          ...getAuthHeaders(),
           "Content-Type": "application/json"
         },
         body: decision === "reject" ? JSON.stringify({ reason: "Rejected by admin" }) : undefined

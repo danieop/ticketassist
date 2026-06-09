@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LoadingSpinner } from "./loading-spinner";
 import { StatusBadge } from "./status-badge";
 import {
@@ -9,9 +11,11 @@ import {
   getResponseErrorMessage,
   type TicketSource,
   type WorkflowApi,
-  type WorkflowDashboardApi
+  type WorkflowDashboardApi,
+  type WorkflowSummaryApi,
+  type WorkflowSummaryPageApi
 } from "@/lib/workflow-api";
-import { getAuthHeaders } from "@/lib/auth-client";
+import { authFetch } from "@/lib/auth-client";
 
 const agentSteps = [
   { type: "TICKET_ANALYZER", label: "Ticket Analyzer" },
@@ -25,6 +29,8 @@ const agentSteps = [
 type AgentStepType = (typeof agentSteps)[number]["type"];
 
 const ticketSources: TicketSource[] = ["MANUAL", "EMAIL", "SLACK", "ZENDESK", "JIRA"];
+const recentWorkflowPageSize = 10;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 const liveAgentMilestones = [
   { percent: 12, message: "Preparing input snapshot for this agent." },
@@ -44,6 +50,31 @@ const emptyTicket = {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
+}
+
+function getJsonOnce<T>(requestKey: string, url: string) {
+  const existingRequest = inFlightGetRequests.get(requestKey);
+
+  if (existingRequest) {
+    return existingRequest as Promise<T>;
+  }
+
+  const request = authFetch(url)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await getResponseErrorMessage(response));
+      }
+
+      return (await response.json()) as T;
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        inFlightGetRequests.delete(requestKey);
+      }, 100);
+    });
+
+  inFlightGetRequests.set(requestKey, request);
+  return request;
 }
 
 function stringifySnapshot(value: unknown, maxLength = 10000) {
@@ -229,6 +260,26 @@ function getAgentOutput(workflow: WorkflowApi | null, type: AgentStepType) {
   return workflow?.state?.mentorDraft;
 }
 
+function isParallelAgentStep(type: AgentStepType) {
+  return type === "PRIORITY_CLASSIFIER" || type === "REPO_SEARCH";
+}
+
+function getStepNumber(type: AgentStepType, index: number) {
+  if (type === "PRIORITY_CLASSIFIER") {
+    return "2A";
+  }
+
+  if (type === "REPO_SEARCH") {
+    return "2B";
+  }
+
+  if (index > 2) {
+    return String(index);
+  }
+
+  return String(index + 1);
+}
+
 function getLatestCompletedAgentType(workflow: WorkflowApi | null) {
   return [...(workflow?.agents ?? [])].sort((left, right) => right.agent.executionOrder - left.agent.executionOrder)[0]?.agent.type;
 }
@@ -339,13 +390,172 @@ function buildLivePromptPreview(type: AgentStepType, workflow: WorkflowApi | nul
   });
 }
 
+type WorkflowQueueState = {
+  state: "queued" | "running" | "completed" | "failed" | "idle";
+  label?: string;
+};
+
+function getQueueHistoryMatch(items: unknown[] | undefined, workflowRunId: string) {
+  return (items ?? []).find((item): item is { workflowRunId?: string; label?: string } => {
+    return Boolean(item && typeof item === "object" && "workflowRunId" in item && item.workflowRunId === workflowRunId);
+  });
+}
+
+function getWorkflowQueueState(dashboard: WorkflowDashboardApi | null, workflowRunId: string): WorkflowQueueState {
+  if (!dashboard) {
+    return { state: "idle" };
+  }
+
+  if (dashboard.queue.active?.workflowRunId === workflowRunId) {
+    return {
+      state: "running",
+      label: dashboard.queue.active.label
+    };
+  }
+
+  const pendingJob = dashboard.queue.pendingJobs?.find((job) => job.workflowRunId === workflowRunId);
+
+  if (pendingJob) {
+    return {
+      state: "queued",
+      label: pendingJob.label
+    };
+  }
+
+  const failedJob = getQueueHistoryMatch(dashboard.queue.failed, workflowRunId);
+
+  if (failedJob) {
+    return {
+      state: "failed",
+      label: failedJob.label
+    };
+  }
+
+  const completedJob = getQueueHistoryMatch(dashboard.queue.completed, workflowRunId);
+
+  if (completedJob) {
+    return {
+      state: "completed",
+      label: completedJob.label
+    };
+  }
+
+  return { state: "idle" };
+}
+
+function RecentWorkflowRow({
+  workflow,
+  selected,
+  queueState,
+  onSelect
+}: {
+  workflow: WorkflowSummaryApi;
+  selected: boolean;
+  queueState: WorkflowQueueState;
+  onSelect: () => void;
+}) {
+  const hasQueueState = queueState.state !== "idle";
+
+  return (
+    <button
+      className={`workflow-row ${selected ? "workflow-row-active" : ""} ${
+        queueState.state === "running" || queueState.state === "queued" ? "workflow-row-queued" : ""
+      }`}
+      onClick={onSelect}
+      type="button"
+    >
+      <span>{workflow.ticket.title}</span>
+      <span>{workflow.ticket.reporterName}</span>
+      <StatusBadge status={workflow.status} />
+      <span className={`workflow-queue-chip workflow-queue-chip-${queueState.state}`}>
+        {hasQueueState ? queueState.state : "ready"}
+      </span>
+      <span>{hasQueueState ? queueState.label ?? "Background job" : formatDateTime(workflow.startedAt)}</span>
+    </button>
+  );
+}
+
+function RecentWorkflowSkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: recentWorkflowPageSize }).map((_, index) => (
+        <div className="workflow-row workflow-row-skeleton" key={`workflow-skeleton-${index}`}>
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function WorkflowDetailSkeleton() {
+  return (
+    <div className="workflow-detail-skeleton">
+      <section className="panel agent-progress-panel agent-progress-panel-primary">
+        <div className="workflow-skeleton-heading">
+          <span />
+          <span />
+        </div>
+        <div className="agent-overview-strip workflow-skeleton-grid">
+          <div />
+          <div />
+          <div />
+        </div>
+        <div className="agent-step-list">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <article className="agent-step-card workflow-agent-skeleton" key={`agent-detail-skeleton-${index}`}>
+              <span />
+              <div>
+                <strong />
+                <p />
+                <div />
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="workflow-results-grid">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <article className="panel workflow-result-skeleton" key={`result-skeleton-${index}`}>
+            <span />
+            <strong />
+            <p />
+            <p />
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
 export function DeveloperWorkflowConsole() {
+  return <DeveloperWorkflowWorkspace />;
+}
+
+export function WorkflowDetailConsole({ workflowId }: { workflowId: string }) {
+  return <DeveloperWorkflowWorkspace workflowId={workflowId} />;
+}
+
+function DeveloperWorkflowWorkspace({ workflowId }: { workflowId?: string }) {
+  const router = useRouter();
+  const isDetailPage = Boolean(workflowId);
   const [form, setForm] = useState(emptyTicket);
   const [workflow, setWorkflow] = useState<WorkflowApi | null>(null);
   const [dashboard, setDashboard] = useState<WorkflowDashboardApi | null>(null);
-  const [recentWorkflows, setRecentWorkflows] = useState<WorkflowApi[]>([]);
+  const [recentWorkflows, setRecentWorkflows] = useState<WorkflowSummaryApi[]>([]);
+  const [recentSearch, setRecentSearch] = useState("");
+  const [recentPageMeta, setRecentPageMeta] = useState({
+    page: 1,
+    limit: recentWorkflowPageSize,
+    total: 0,
+    totalPages: 1
+  });
   const [isRunning, setIsRunning] = useState(false);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
+  const [isLoadingWorkflowDetail, setIsLoadingWorkflowDetail] = useState(false);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [isSavingOutput, setIsSavingOutput] = useState(false);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
@@ -355,8 +565,12 @@ export function DeveloperWorkflowConsole() {
   const [editingAgentType, setEditingAgentType] = useState<AgentStepType | null>(null);
   const [editingOutput, setEditingOutput] = useState("");
   const [editingNote, setEditingNote] = useState("");
-  const [runAsync, setRunAsync] = useState(false);
   const [message, setMessage] = useState("");
+  const initialOverviewLoadRef = useRef(false);
+  const initialWorkflowDetailLoadRef = useRef<string | null>(null);
+  const recentRequestKeyRef = useRef<string | null>(null);
+  const dashboardRequestRef = useRef(false);
+  const workflowDetailRequestRef = useRef<string | null>(null);
 
   const analysis = workflow?.state?.ticketAnalysis;
   const priority = workflow?.state?.priorityClassification;
@@ -377,54 +591,141 @@ export function DeveloperWorkflowConsole() {
       ? agentSteps.find((step) => step.type === getLatestCompletedAgentType(workflow))
       : null;
   const latestCompletedAgentType = workflow ? getLatestCompletedAgentType(workflow) : null;
+  const isParallelBatchRunning = Boolean(
+    isRunning && workflow?.status === "ticket_analyzed" && activeAgentType === "PRIORITY_CLASSIFIER"
+  );
+  const activeAgentLabel = isParallelBatchRunning
+    ? "Priority Classifier + Repo Search"
+    : activeAgent?.label;
   const activeAgentPercent = isRunning ? activeAgentProgress : activeAgent && workflow ? 100 : 0;
-  const canAccept = Boolean(workflow?.requiresDeveloperDecision && workflow.nextAgent && !isRunning);
-  const canRerun = Boolean(workflow?.requiresDeveloperDecision && !isRunning);
+  const selectedQueueState = workflow ? getWorkflowQueueState(dashboard, workflow.id) : null;
+  const isSelectedWorkflowQueued = selectedQueueState?.state === "queued" || selectedQueueState?.state === "running";
+  const canAccept = Boolean(workflow?.requiresDeveloperDecision && workflow.nextAgent && !isSelectedWorkflowQueued && !isRunning);
+  const canRerun = Boolean(workflow?.requiresDeveloperDecision && !isSelectedWorkflowQueued && !isRunning);
 
-  const loadRecentWorkflows = async () => {
+  const loadRecentWorkflows = async (page = recentPageMeta.page, search = recentSearch) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(recentWorkflowPageSize)
+    });
+    const trimmedSearch = search.trim();
+
+    if (trimmedSearch) {
+      params.set("search", trimmedSearch);
+    }
+
+    const requestKey = params.toString();
+
+    if (recentRequestKeyRef.current === requestKey) {
+      return;
+    }
+
+    recentRequestKeyRef.current = requestKey;
     setIsLoadingRecent(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows?limit=12`, {
-        headers: getAuthHeaders()
+      const url = `${apiBaseUrl}/api/workflows/summaries?${params.toString()}`;
+      const payload = await getJsonOnce<WorkflowSummaryPageApi>(`recent:${requestKey}`, url);
+      setRecentWorkflows(payload.items);
+      setRecentPageMeta({
+        page: payload.page,
+        limit: payload.limit,
+        total: payload.total,
+        totalPages: payload.totalPages
       });
-
-      if (!response.ok) {
-        throw new Error(await getResponseErrorMessage(response));
-      }
-
-      setRecentWorkflows((await response.json()) as WorkflowApi[]);
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
+      recentRequestKeyRef.current = null;
       setIsLoadingRecent(false);
     }
   };
 
-  const loadDashboard = async () => {
-    setIsLoadingDashboard(true);
+  const searchRecentWorkflows = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void loadRecentWorkflows(1, recentSearch);
+  };
+
+  const loadWorkflowDetail = async (id: string) => {
+    if (workflowDetailRequestRef.current === id) {
+      return;
+    }
+
+    workflowDetailRequestRef.current = id;
+    setIsLoadingWorkflowDetail(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows/dashboard`, {
-        headers: getAuthHeaders()
-      });
-
-      if (!response.ok) {
-        throw new Error(await getResponseErrorMessage(response));
-      }
-
-      setDashboard((await response.json()) as WorkflowDashboardApi);
+      const payload = await getJsonOnce<WorkflowApi>(`workflow:${id}`, `${apiBaseUrl}/api/workflows/${id}`);
+      setWorkflow(payload);
+      window.dispatchEvent(
+        new CustomEvent("ticketassist:dashboard-header", {
+          detail: {
+            title: payload.ticket.title,
+            description: `${payload.ticket.reporterName} - ${payload.ticket.source} - ${formatDateTime(payload.startedAt)}`
+          }
+        })
+      );
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
+      workflowDetailRequestRef.current = null;
+      setIsLoadingWorkflowDetail(false);
+    }
+  };
+
+  const loadDashboard = async () => {
+    if (dashboardRequestRef.current) {
+      return;
+    }
+
+    dashboardRequestRef.current = true;
+    setIsLoadingDashboard(true);
+
+    try {
+      setDashboard(await getJsonOnce<WorkflowDashboardApi>("workflow-dashboard", `${apiBaseUrl}/api/workflows/dashboard`));
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      dashboardRequestRef.current = false;
       setIsLoadingDashboard(false);
     }
   };
 
   useEffect(() => {
-    void loadRecentWorkflows();
-    void loadDashboard();
-  }, []);
+    if (!isDetailPage && !initialOverviewLoadRef.current) {
+      initialOverviewLoadRef.current = true;
+      window.dispatchEvent(new CustomEvent("ticketassist:dashboard-header", { detail: {} }));
+      void loadRecentWorkflows();
+      void loadDashboard();
+    }
+
+    if (isDetailPage && workflowId && initialWorkflowDetailLoadRef.current !== workflowId) {
+      initialWorkflowDetailLoadRef.current = workflowId;
+      void loadDashboard();
+    }
+  }, [isDetailPage]);
+
+  useEffect(() => {
+    if (!workflowId) {
+      return;
+    }
+
+    if (initialWorkflowDetailLoadRef.current === `detail:${workflowId}`) {
+      return;
+    }
+
+    initialWorkflowDetailLoadRef.current = `detail:${workflowId}`;
+    setWorkflow(null);
+    window.dispatchEvent(
+      new CustomEvent("ticketassist:dashboard-header", {
+        detail: {
+          description: "Loading workflow detail, agent trace, and review state.",
+          loading: true
+        }
+      })
+    );
+    void loadWorkflowDetail(workflowId);
+  }, [workflowId]);
 
   useEffect(() => {
     if (!isRunning || !activeAgentType) {
@@ -488,14 +789,14 @@ export function DeveloperWorkflowConsole() {
     startLiveAgent("TICKET_ANALYZER", "Running Ticket Analyzer.");
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows`, {
+      const response = await authFetch(`${apiBaseUrl}/api/workflows`, {
         method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           retrievalStrategy: "hybrid",
           forceReindex: false,
           maxResults: 10,
-          runAsync,
+          runAsync: true,
           ticket: {
             title: form.title.trim(),
             description: form.description.trim(),
@@ -511,9 +812,12 @@ export function DeveloperWorkflowConsole() {
 
       const createdWorkflow = (await response.json()) as WorkflowApi;
       setWorkflow(createdWorkflow);
-      setRecentWorkflows((current) => [createdWorkflow, ...current.filter((item) => item.id !== createdWorkflow.id)].slice(0, 12));
-      setMessage(runAsync ? "Workflow queued. Refresh recent workflows to see the first agent result." : "Ticket Analyzer finished. Accept to continue or rerun this agent.");
-      void loadDashboard();
+      setRecentWorkflows((current) =>
+        [createdWorkflow, ...current.filter((item) => item.id !== createdWorkflow.id)].slice(0, recentWorkflowPageSize)
+      );
+      setMessage("Workflow queued. You can open another workflow while the agent runs in the background.");
+      await Promise.all([loadDashboard(), loadRecentWorkflows(1, recentSearch)]);
+      router.push(`/developer/workflow/${createdWorkflow.id}`);
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -543,10 +847,10 @@ export function DeveloperWorkflowConsole() {
     );
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/${action}`, {
+      const response = await authFetch(`${apiBaseUrl}/api/workflows/${workflow.id}/${action}`, {
         method: "POST",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
-        body: action === "accept" || action === "rerun" ? JSON.stringify({ agentType, runAsync }) : undefined
+        headers: { "Content-Type": "application/json" },
+        body: action === "accept" || action === "rerun" ? JSON.stringify({ agentType, runAsync: true }) : undefined
       });
 
       if (!response.ok) {
@@ -555,17 +859,10 @@ export function DeveloperWorkflowConsole() {
 
       const updatedWorkflow = (await response.json()) as WorkflowApi;
       setWorkflow(updatedWorkflow);
-      setRecentWorkflows((current) =>
-        [updatedWorkflow, ...current.filter((item) => item.id !== updatedWorkflow.id)].slice(0, 12)
-      );
       setMessage(
-        runAsync
-          ? "Agent job queued. Refresh shortly to see the result."
-          : updatedWorkflow.nextAgent
-          ? "Agent finished. Review the handoff, then accept to continue or rerun."
-          : "All agents finished. Confirm the mentor draft before sending."
+        "Agent job queued. You can inspect another workflow while this one continues in the background."
       );
-      void loadDashboard();
+      await Promise.all([loadDashboard(), loadWorkflowDetail(updatedWorkflow.id)]);
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -582,9 +879,9 @@ export function DeveloperWorkflowConsole() {
 
     try {
       const parsedOutput = JSON.parse(editingOutput) as unknown;
-      const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/output`, {
+      const response = await authFetch(`${apiBaseUrl}/api/workflows/${workflow.id}/output`, {
         method: "PATCH",
-        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agentType: editingAgentType,
           output: parsedOutput,
@@ -599,7 +896,7 @@ export function DeveloperWorkflowConsole() {
       const updatedWorkflow = (await response.json()) as WorkflowApi;
       setWorkflow(updatedWorkflow);
       setRecentWorkflows((current) =>
-        [updatedWorkflow, ...current.filter((item) => item.id !== updatedWorkflow.id)].slice(0, 12)
+        [updatedWorkflow, ...current.filter((item) => item.id !== updatedWorkflow.id)].slice(0, recentWorkflowPageSize)
       );
       setEditingAgentType(null);
       setEditingOutput("");
@@ -621,9 +918,8 @@ export function DeveloperWorkflowConsole() {
     setIsSubmittingReview(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows/${workflow.id}/submit`, {
-        method: "POST",
-        headers: getAuthHeaders()
+      const response = await authFetch(`${apiBaseUrl}/api/workflows/${workflow.id}/submit`, {
+        method: "POST"
       });
 
       if (!response.ok) {
@@ -632,9 +928,6 @@ export function DeveloperWorkflowConsole() {
 
       const submittedWorkflow = (await response.json()) as WorkflowApi;
       setWorkflow(submittedWorkflow);
-      setRecentWorkflows((current) =>
-        current.map((item) => (item.id === submittedWorkflow.id ? submittedWorkflow : item))
-      );
       setMessage("Sent to mentor review queue.");
       void loadDashboard();
     } catch (error) {
@@ -644,9 +937,236 @@ export function DeveloperWorkflowConsole() {
     }
   };
 
+  if (!isDetailPage) {
+    return (
+      <section className="workflow-console workflow-overview-console">
+        <section className="panel workflow-dashboard-panel">
+          <div className="panel-heading row-heading">
+            <div>
+              <p className="eyebrow">Workflow dashboard</p>
+              <h2>Agent operations</h2>
+            </div>
+            <button className="secondary-action compact-action" disabled={isLoadingDashboard} onClick={() => void loadDashboard()} type="button">
+              {isLoadingDashboard ? <LoadingSpinner /> : null}
+              {isLoadingDashboard ? "Refreshing" : "Refresh"}
+            </button>
+          </div>
+          <div className="workflow-dashboard-grid">
+            <div>
+              <span>Avg latency</span>
+              <strong>{dashboard ? `${dashboard.averageAgentLatencyMs}ms` : "..."}</strong>
+            </div>
+            <div>
+              <span>Fallback rate</span>
+              <strong>{dashboard ? `${Math.round(dashboard.fallbackRate * 100)}%` : "..."}</strong>
+            </div>
+            <div>
+              <span>Queue</span>
+              <strong>
+                {dashboard
+                  ? dashboard.queue.active
+                    ? `${dashboard.queue.pending} pending + 1 running`
+                    : `${dashboard.queue.pending} pending`
+                  : "..."}
+              </strong>
+            </div>
+            <div>
+              <span>Mentor decisions</span>
+              <strong>{Object.values(dashboard?.mentorDecisions ?? {}).reduce((sum, value) => sum + value, 0)}</strong>
+            </div>
+          </div>
+        </section>
+
+        <div className="developer-overview-grid">
+          <section className="panel recent-workflows-panel">
+            <div className="panel-heading row-heading">
+              <div>
+                <p className="eyebrow">Recent workflows</p>
+                <h2>Developer handoffs</h2>
+              </div>
+              <button className="secondary-action compact-action" disabled={isLoadingRecent} onClick={() => void loadRecentWorkflows()} type="button">
+                {isLoadingRecent ? <LoadingSpinner /> : null}
+                {isLoadingRecent ? "Refreshing" : "Refresh"}
+              </button>
+            </div>
+            <form className="workflow-recent-tools" onSubmit={searchRecentWorkflows}>
+              <label>
+                <span>Search title</span>
+                <input
+                  onChange={(event) => setRecentSearch(event.target.value)}
+                  placeholder="Search workflow title"
+                  type="search"
+                  value={recentSearch}
+                />
+              </label>
+              <button className="secondary-action compact-action" disabled={isLoadingRecent} type="submit">
+                Search
+              </button>
+            </form>
+            <div className="workflow-table">
+              {isLoadingRecent ? <RecentWorkflowSkeletonRows /> : null}
+              {!isLoadingRecent
+                ? recentWorkflows.map((item) => (
+                    <RecentWorkflowRow
+                      key={item.id}
+                      onSelect={() => router.push(`/developer/workflow/${item.id}`)}
+                      queueState={getWorkflowQueueState(dashboard, item.id)}
+                      selected={false}
+                      workflow={item}
+                    />
+                  ))
+                : null}
+              {!isLoadingRecent && recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
+            </div>
+            <div className="workflow-pagination">
+              <span>
+                Page {recentPageMeta.page} of {recentPageMeta.totalPages} - {recentPageMeta.total} workflows
+              </span>
+              <div>
+                <button
+                  className="secondary-action compact-action"
+                  disabled={isLoadingRecent || recentPageMeta.page <= 1}
+                  onClick={() => void loadRecentWorkflows(recentPageMeta.page - 1, recentSearch)}
+                  type="button"
+                >
+                  Previous
+                </button>
+                <button
+                  className="secondary-action compact-action"
+                  disabled={isLoadingRecent || recentPageMeta.page >= recentPageMeta.totalPages}
+                  onClick={() => void loadRecentWorkflows(recentPageMeta.page + 1, recentSearch)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel workflow-form-panel workflow-form-panel-compact">
+            <div className="panel-heading">
+              <p className="eyebrow">New workflow</p>
+              <h2>Ticket input</h2>
+            </div>
+            <form className="workflow-ticket-form" onSubmit={(event) => void runWorkflow(event)}>
+              <label>
+                <span>Title</span>
+                <input
+                  onChange={(event) => updateField("title", event.target.value)}
+                  placeholder="Checkout hangs after coupon is applied"
+                  required
+                  type="text"
+                  value={form.title}
+                />
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea
+                  onChange={(event) => updateField("description", event.target.value)}
+                  placeholder="Describe the symptom, impact, environment, and any workaround."
+                  required
+                  rows={6}
+                  value={form.description}
+                />
+              </label>
+              <div className="ticket-form-row">
+                <label>
+                  <span>Reporter</span>
+                  <input
+                    onChange={(event) => updateField("reporterName", event.target.value)}
+                    placeholder="Reporter name"
+                    type="text"
+                    value={form.reporterName}
+                  />
+                </label>
+                <label>
+                  <span>Source</span>
+                  <select onChange={(event) => updateField("source", event.target.value)} value={form.source}>
+                    {ticketSources.map((source) => (
+                      <option key={source} value={source}>
+                        {source}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="workflow-queue-note">
+                <strong>Background queue always on</strong>
+                <span>Each agent job is queued automatically, so you can keep browsing other workflows.</span>
+              </div>
+              <button className="primary-action" disabled={isRunning} type="submit">
+                {isRunning ? <LoadingSpinner /> : null}
+                {isRunning ? "Queueing workflow" : "Queue workflow"}
+              </button>
+            </form>
+          </section>
+        </div>
+
+        <section className="panel workflow-audit-panel">
+          <div className="panel-heading">
+            <p className="eyebrow">Audit and versions</p>
+            <h2>Developer control history</h2>
+          </div>
+          <div className="workflow-audit-grid">
+            <div>
+              <span>Output edits</span>
+              <strong>{dashboard?.editCount ?? 0}</strong>
+            </div>
+            <div>
+              <span>Reruns</span>
+              <strong>{dashboard?.rerunCount ?? 0}</strong>
+            </div>
+            <div>
+              <span>Fallbacks</span>
+              <strong>{dashboard?.fallbackCount ?? 0}</strong>
+            </div>
+            <div>
+              <span>Queue pending</span>
+              <strong>{dashboard?.queue.pending ?? 0}</strong>
+            </div>
+            <div>
+              <span>Queue completed</span>
+              <strong>{dashboard?.queue.completed.length ?? 0}</strong>
+            </div>
+            <div>
+              <span>Queue failed</span>
+              <strong>{dashboard?.queue.failed.length ?? 0}</strong>
+            </div>
+          </div>
+          {message ? <p className="repo-status-message">{message}</p> : null}
+        </section>
+      </section>
+    );
+  }
+
+  if (isLoadingWorkflowDetail && !workflow) {
+    return (
+      <section className="workflow-console workflow-detail-console">
+        <div className="workflow-detail-nav">
+          <Link className="secondary-action compact-action" href="/developer">
+            Back to workflows
+          </Link>
+          <button className="secondary-action compact-action" disabled type="button">
+            <LoadingSpinner />
+            Loading workflow
+          </button>
+        </div>
+        <WorkflowDetailSkeleton />
+      </section>
+    );
+  }
+
   return (
-    <section className="workflow-console">
-      <section className="panel recent-workflows-panel">
+    <section className="workflow-console workflow-detail-console">
+      <div className="workflow-detail-nav">
+        <Link className="secondary-action compact-action" href="/developer">
+          Back to workflows
+        </Link>
+        <button className="secondary-action compact-action" onClick={() => workflowId ? void loadWorkflowDetail(workflowId) : undefined} type="button">
+          Refresh workflow
+        </button>
+      </div>
+      {/* <section className="panel recent-workflows-panel">
         <div className="panel-heading row-heading">
           <div>
             <p className="eyebrow">Recent workflows</p>
@@ -669,22 +1189,18 @@ export function DeveloperWorkflowConsole() {
               ))
             : null}
           {recentWorkflows.map((item) => (
-            <button
-              className={`workflow-row ${item.id === workflow?.id ? "workflow-row-active" : ""}`}
+            <RecentWorkflowRow
               key={item.id}
-              onClick={() => setWorkflow(item)}
-              type="button"
-            >
-              <span>{item.ticket.title}</span>
-              <span>{item.ticket.reporterName}</span>
-              <StatusBadge status={item.status} />
-              <span>{formatDateTime(item.startedAt)}</span>
-            </button>
+              onSelect={() => setWorkflow(item)}
+              queueState={getWorkflowQueueState(dashboard, item.id)}
+              selected={item.id === workflow?.id}
+              workflow={item}
+            />
           ))}
           {!isLoadingRecent && recentWorkflows.length === 0 ? <p className="muted-text">No workflows yet.</p> : null}
         </div>
-      </section>
-      <section className="panel workflow-dashboard-panel">
+      </section> */}
+      {/* <section className="panel workflow-dashboard-panel">
         <div className="panel-heading row-heading">
           <div>
             <p className="eyebrow">Workflow dashboard</p>
@@ -712,22 +1228,28 @@ export function DeveloperWorkflowConsole() {
             <span>Edits</span>
             <strong>{dashboard?.editCount ?? 0}</strong>
           </div>
-          <div>
-            <span>Queue</span>
-            <strong>{dashboard ? `${dashboard.queue.pending} pending` : "..."}</strong>
-          </div>
+            <div>
+              <span>Queue</span>
+              <strong>
+                {dashboard
+                  ? dashboard.queue.active
+                    ? `${dashboard.queue.pending} pending + 1 running`
+                    : `${dashboard.queue.pending} pending`
+                  : "..."}
+              </strong>
+            </div>
           <div>
             <span>Mentor decisions</span>
             <strong>{Object.values(dashboard?.mentorDecisions ?? {}).reduce((sum, value) => sum + value, 0)}</strong>
           </div>
         </div>
-      </section>
+      </section> */}
       <div className="workflow-console-grid">
         <section className="panel agent-progress-panel agent-progress-panel-primary">
           <div className="panel-heading row-heading">
             <div>
               <p className="eyebrow">Agent progress</p>
-              <h2>{activeAgent ? `${activeAgent.label}: ${activeAgentPercent}%` : "No agent running"}</h2>
+              <h2>{activeAgentLabel ? `${activeAgentLabel}: ${activeAgentPercent}%` : "No agent running"}</h2>
             </div>
             {workflow ? <StatusBadge status={workflow.status} /> : null}
           </div>
@@ -735,7 +1257,7 @@ export function DeveloperWorkflowConsole() {
           <div className="agent-overview-strip">
             <div>
               <span>Current agent</span>
-              <strong>{activeAgent?.label ?? "Ready"}</strong>
+              <strong>{isSelectedWorkflowQueued ? selectedQueueState?.label ?? "Queued job" : activeAgentLabel ?? "Ready"}</strong>
             </div>
             <div>
               <span>Completed</span>
@@ -754,7 +1276,9 @@ export function DeveloperWorkflowConsole() {
             <div>
               <strong>{completedAgentCount}/6 agents complete</strong>
               <p>
-                {workflow?.nextAgent
+                {isSelectedWorkflowQueued
+                  ? `${selectedQueueState?.state === "running" ? "Running" : "Queued"} in background: ${selectedQueueState?.label ?? "agent job"}. You can switch workflows safely.`
+                  : workflow?.nextAgent
                   ? `Next handoff target: ${workflow.nextAgent.name}`
                   : workflow
                     ? "No pending agent handoff."
@@ -762,14 +1286,27 @@ export function DeveloperWorkflowConsole() {
               </p>
             </div>
           </div>
+          <div className={`parallel-agent-banner ${isParallelBatchRunning ? "parallel-agent-banner-active" : ""}`}>
+            <div>
+              <span>Parallel batch</span>
+              <strong>2A Priority Classifier + 2B Repo Search</strong>
+            </div>
+            <p>
+              Both agents start from the Ticket Analyzer handoff. Repo Search can run from ticket analysis while Priority
+              Classifier independently scores impact.
+            </p>
+          </div>
           <div className="agent-step-list">
             {agentSteps.map((step, index) => {
-              const status = getAgentStatus(workflow, step.type, isRunning, activeAgentType);
+              const isParallelStep = isParallelAgentStep(step.type);
+              const status = isParallelBatchRunning && isParallelStep
+                ? "running"
+                : getAgentStatus(workflow, step.type, isRunning, activeAgentType);
               const agentRun = getAgentRun(workflow, step.type);
               const traces = getTraceForAgent(workflow, step.type);
               const startedTrace = traces.find((entry) => entry.metadata?.status === "started");
               const completedTrace = [...traces].reverse().find((entry) => entry.metadata?.status === "completed" || entry.metadata?.status === "failed");
-              const isActiveAgent = isRunning && activeAgentType === step.type;
+              const isActiveAgent = isParallelBatchRunning && isParallelStep ? true : isRunning && activeAgentType === step.type;
               const isLatestCompletedAgent = latestCompletedAgentType === step.type;
               const isCompletedAgent = status === "success";
               const isStaleAgent = workflow?.workflowMeta?.staleAgentTypes?.includes(step.type);
@@ -791,15 +1328,20 @@ export function DeveloperWorkflowConsole() {
 
               return (
                 <article
-                  className={`agent-step-card agent-step-${status} ${isActiveAgent ? "agent-step-card-active" : ""} ${
+                  className={`agent-step-card agent-step-${status} ${isParallelStep ? "agent-step-card-parallel" : ""} ${
+                    isActiveAgent ? "agent-step-card-active" : ""
+                  } ${
                     workflow?.requiresDeveloperDecision && isLatestCompletedAgent && !isRunning ? "agent-step-card-review" : ""
                   }`}
                   key={step.type}
                 >
-                  <span>{index + 1}</span>
+                  <span>{getStepNumber(step.type, index)}</span>
                   <div>
                     <div className="agent-card-title-row">
-                      <strong>{step.label}</strong>
+                      <strong>
+                        {step.label}
+                        {isParallelStep ? <em>Parallel</em> : null}
+                      </strong>
                       <small>{isStaleAgent ? "stale" : `${agentProgress}%`}</small>
                     </div>
                     <p>
@@ -836,7 +1378,7 @@ export function DeveloperWorkflowConsole() {
                               {workflow?.requiresDeveloperDecision && isCompletedAgent ? (
                                 <button
                                   className="secondary-action compact-action"
-                                  disabled={isRunning || isSavingOutput}
+                                  disabled={isSelectedWorkflowQueued || isRunning || isSavingOutput}
                                   onClick={() => startEditingAgent(step.type)}
                                   type="button"
                                 >
@@ -891,63 +1433,6 @@ export function DeveloperWorkflowConsole() {
           {message ? <p className="repo-status-message">{message}</p> : null}
         </section>
 
-        <section className="panel workflow-form-panel workflow-form-panel-compact">
-          <div className="panel-heading">
-            <p className="eyebrow">New workflow</p>
-            <h2>Ticket input</h2>
-          </div>
-          <form className="workflow-ticket-form" onSubmit={(event) => void runWorkflow(event)}>
-            <label>
-              <span>Title</span>
-              <input
-                onChange={(event) => updateField("title", event.target.value)}
-                placeholder="Checkout hangs after coupon is applied"
-                required
-                type="text"
-                value={form.title}
-              />
-            </label>
-            <label>
-              <span>Description</span>
-              <textarea
-                onChange={(event) => updateField("description", event.target.value)}
-                placeholder="Describe the symptom, impact, environment, and any workaround."
-                required
-                rows={6}
-                value={form.description}
-              />
-            </label>
-            <div className="ticket-form-row">
-              <label>
-                <span>Reporter</span>
-                <input
-                  onChange={(event) => updateField("reporterName", event.target.value)}
-                  placeholder="Reporter name"
-                  type="text"
-                  value={form.reporterName}
-                />
-              </label>
-              <label>
-                <span>Source</span>
-                <select onChange={(event) => updateField("source", event.target.value)} value={form.source}>
-                  {ticketSources.map((source) => (
-                    <option key={source} value={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label className="workflow-toggle-row">
-              <input checked={runAsync} onChange={(event) => setRunAsync(event.target.checked)} type="checkbox" />
-              <span>Run agents in background queue</span>
-            </label>
-            <button className="primary-action" disabled={isRunning} type="submit">
-              {isRunning ? <LoadingSpinner /> : null}
-              {isRunning ? "Running agents" : "Run workflow"}
-            </button>
-          </form>
-        </section>
       </div>
 
       {workflow ? (
