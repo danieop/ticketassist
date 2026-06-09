@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { redactPayload, redactText } from "./redaction.service.js";
 
 export const workflowStatusSchema = z.enum([
   "created",
@@ -50,6 +51,44 @@ export const repoSearchResultSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 
+export const dependencyGraphSchema = z.object({
+  nodes: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      kind: z.string(),
+      filePath: z.string(),
+      startLine: z.number().int().optional(),
+      endLine: z.number().int().optional(),
+      language: z.string().optional(),
+      layer: z.string().optional(),
+      confidence: z.number().min(0).max(1).optional()
+    })
+  ),
+  edges: z.array(
+    z.object({
+      from: z.string(),
+      to: z.string(),
+      type: z.string(),
+      confidence: z.number().min(0).max(1).optional(),
+      evidence: z.string().optional()
+    })
+  ),
+  generatedAt: z.string()
+});
+
+export const ticketMemoryMatchSchema = z.object({
+  workflowRunId: z.string(),
+  ticketId: z.string(),
+  title: z.string(),
+  score: z.number(),
+  status: z.string(),
+  matchedSignals: z.array(z.string()),
+  summary: z.string().optional(),
+  fixTitle: z.string().optional(),
+  reviewedDecision: z.string().optional()
+});
+
 export const repoSearchSchema = z.object({
   queryTerms: z.array(z.string()),
   semanticQuery: z.string(),
@@ -65,6 +104,8 @@ export const repoSearchSchema = z.object({
     vectorStore: z.literal("postgresql_pgvector")
   }),
   results: z.array(repoSearchResultSchema),
+  dependencyGraph: dependencyGraphSchema.optional(),
+  memoryMatches: z.array(ticketMemoryMatchSchema).optional(),
   searchedAt: z.string(),
   warnings: z.array(z.string()).optional()
 });
@@ -92,6 +133,19 @@ export const codeContextSchema = z.object({
   summary: z.string().min(1),
   relevantFiles: z.array(codeContextFileSchema),
   riskNotes: stringArraySchema,
+  graphContext: z
+    .object({
+      nodes: z.array(z.string()),
+      edges: z.array(z.string()),
+      summary: z.string()
+    })
+    .optional(),
+  memoryContext: z
+    .object({
+      matches: z.array(ticketMemoryMatchSchema),
+      summary: z.string()
+    })
+    .optional(),
   generatedAt: z.string()
 });
 
@@ -102,6 +156,43 @@ export const fixProposalSchema = z.object({
   steps: stringArraySchema,
   risks: stringArraySchema,
   verificationSteps: stringArraySchema,
+  patchProposal: z
+    .object({
+      strategy: z.string(),
+      targetFiles: z.array(z.string()),
+      proposedDiff: z.string(),
+      applyMode: z.literal("manual_review"),
+      confidence: z.number().min(0).max(1)
+    })
+    .optional(),
+  testPlan: z
+    .object({
+      framework: z.string(),
+      cases: z.array(
+        z.object({
+          name: z.string(),
+          type: z.string(),
+          steps: z.array(z.string()),
+          expectedResult: z.string()
+        })
+      ),
+      generatedArtifacts: z.array(z.string())
+    })
+    .optional(),
+  verificationReport: z
+    .object({
+      status: z.enum(["pass", "fail", "partial", "not_run"]),
+      commands: z.array(
+        z.object({
+          command: z.string(),
+          status: z.enum(["pass", "fail", "not_run"]),
+          reason: z.string().optional()
+        })
+      ),
+      summary: z.string(),
+      generatedAt: z.string()
+    })
+    .optional(),
   confidence: z.number().min(0).max(1)
 });
 
@@ -178,9 +269,11 @@ export function appendTrace(
   state: TicketWorkflowState,
   entry: Omit<WorkflowTraceEntry, "createdAt">
 ) {
+  const redactedEntry = redactPayload(entry);
+
   return {
     ...state,
-    trace: [...state.trace, { ...entry, createdAt: nowIso() }],
+    trace: [...state.trace, { ...redactedEntry, createdAt: nowIso() }],
     updatedAt: nowIso()
   };
 }
@@ -192,7 +285,7 @@ export function appendError(
   return {
     ...state,
     status: "failed" as const,
-    errors: [...state.errors, { ...error, createdAt: nowIso() }],
+    errors: [...state.errors, { ...error, message: redactText(error.message), createdAt: nowIso() }],
     updatedAt: nowIso()
   };
 }

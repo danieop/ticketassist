@@ -2,6 +2,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { env } from "../config/env.js";
 import { callJsonChat } from "./llm.service.js";
 import { repoSearchService, generateQueryTerms, generateSemanticQuery } from "./repo-search.service.js";
+import { redactPayload } from "./redaction.service.js";
 import {
   appendError,
   appendTrace,
@@ -34,7 +35,11 @@ function summarizeText(text: string, maxLength = 220) {
 }
 
 function compactJson(value: unknown) {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(redactPayload(value), null, 2);
+}
+
+function llmJson(value: unknown) {
+  return JSON.stringify(redactPayload(value));
 }
 
 function getAgentInputPayload(agentName: string, state: TicketWorkflowState) {
@@ -210,7 +215,7 @@ async function analyzeTicketWithLlm(state: TicketWorkflowState): Promise<TicketA
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmJson({
           title: state.ticket.title,
           description: state.ticket.description,
           metadata: state.ticket.metadata,
@@ -315,7 +320,7 @@ async function classifyPriorityWithLlm(state: TicketWorkflowState): Promise<Prio
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmJson({
           ticket: state.ticket,
           analysis: state.analysis,
           priorityRules: {
@@ -411,6 +416,34 @@ function deterministicCodeContext(state: TicketWorkflowState): CodeContext {
   });
 }
 
+function enrichCodeContextWithRepoIntelligence(codeContext: CodeContext, state: TicketWorkflowState): CodeContext {
+  const graph = state.repoSearch?.dependencyGraph;
+  const memoryMatches = state.repoSearch?.memoryMatches ?? [];
+  const graphNodes = graph?.nodes.slice(0, 8).map((node) => `${node.kind}:${node.label} (${node.filePath})`) ?? [];
+  const graphEdges = graph?.edges.slice(0, 8).map((edge) => `${edge.from} -[${edge.type}]-> ${edge.to}`) ?? [];
+
+  return codeContextSchema.parse({
+    ...codeContext,
+    graphContext: graph
+      ? {
+          nodes: graphNodes,
+          edges: graphEdges,
+          summary:
+            graphNodes.length > 0
+              ? `Dependency context includes ${graph.nodes.length} node(s) and ${graph.edges.length} inferred edge(s).`
+              : "No dependency graph nodes were inferred from the current search results."
+        }
+      : undefined,
+    memoryContext:
+      memoryMatches.length > 0
+        ? {
+            matches: memoryMatches,
+            summary: `Found ${memoryMatches.length} prior workflow(s) with overlapping ticket/code signals.`
+          }
+        : undefined
+  });
+}
+
 async function buildCodeContextWithLlm(state: TicketWorkflowState): Promise<CodeContext> {
   const result = await callJsonChat({
     model: env.AI_MODEL_CODE_CONTEXT,
@@ -423,12 +456,19 @@ async function buildCodeContextWithLlm(state: TicketWorkflowState): Promise<Code
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmJson({
           ticket: state.ticket,
           analysis: state.analysis,
           priority: state.priority,
           searchQuery: state.repoSearch?.semanticQuery,
           queryTerms: state.repoSearch?.queryTerms,
+          dependencyGraph: state.repoSearch?.dependencyGraph
+            ? {
+                nodes: state.repoSearch.dependencyGraph.nodes.slice(0, 20),
+                edges: state.repoSearch.dependencyGraph.edges.slice(0, 20)
+              }
+            : undefined,
+          memoryMatches: state.repoSearch?.memoryMatches,
           results: getTopSearchResults(state, 8).map((result) => ({
             filePath: result.filePath,
             score: result.score,
@@ -497,6 +537,136 @@ function deterministicFixProposal(state: TicketWorkflowState): FixProposal {
   });
 }
 
+function detectLikelyTestFramework(files: string[]) {
+  const joined = files.join(" ").toLowerCase();
+
+  if (/\b(package\.json|\.tsx?|\.jsx?)\b/.test(joined)) {
+    return "npm test / TypeScript-JavaScript";
+  }
+
+  if (/\b(pom\.xml|mvnw?)\b/.test(joined)) {
+    return "Maven";
+  }
+
+  if (/\b(build\.gradle|gradlew?)\b/.test(joined)) {
+    return "Gradle";
+  }
+
+  if (/\bbuild\.xml\b/.test(joined)) {
+    return "Ant";
+  }
+
+  if (/\b(pyproject\.toml|pytest|\.py)\b/.test(joined)) {
+    return "pytest";
+  }
+
+  return "manual or repository-specific";
+}
+
+function buildPatchProposal(state: TicketWorkflowState, fixProposal: FixProposal) {
+  const targetFiles = state.codeContext?.relevantFiles.map((file) => file.filePath).slice(0, 5) ?? [];
+  const leadFile = targetFiles[0] ?? "selected source file";
+
+  return {
+    strategy: fixProposal.recommendedApproach,
+    targetFiles,
+    proposedDiff: [
+      "diff --git a/<target-file> b/<target-file>",
+      "--- a/<target-file>",
+      "+++ b/<target-file>",
+      "@@",
+      `# Patch proposal placeholder for ${leadFile}`,
+      "# 1. Reproduce and confirm the failing branch.",
+      "# 2. Apply the smallest guarded change around the confirmed root cause.",
+      "# 3. Add regression coverage from the generated test plan."
+    ].join("\n"),
+    applyMode: "manual_review" as const,
+    confidence: fixProposal.confidence
+  };
+}
+
+function buildTestPlan(state: TicketWorkflowState) {
+  const files = state.codeContext?.relevantFiles.map((file) => file.filePath) ?? [];
+  const framework = detectLikelyTestFramework([...files, state.repoConfig.repoPath]);
+  const feature = state.analysis?.affectedFeature ?? "reported workflow";
+
+  return {
+    framework,
+    cases: [
+      {
+        name: `Regression: ${feature} failure path`,
+        type: "regression",
+        steps: [
+          "Set up the same preconditions from the ticket.",
+          "Execute the reported failing user or API flow.",
+          "Assert the flow completes with the expected state instead of hanging/failing."
+        ],
+        expectedResult: "The reported failure no longer reproduces and the expected state is persisted or rendered."
+      },
+      {
+        name: `Control: ${feature} normal path`,
+        type: "control",
+        steps: [
+          "Run the closest existing successful path.",
+          "Verify behavior remains unchanged after the proposed fix."
+        ],
+        expectedResult: "Existing successful behavior remains stable."
+      }
+    ],
+    generatedArtifacts:
+      files.length > 0
+        ? files.slice(0, 3).map((file) => `Suggested test near ${file}`)
+        : ["Manual verification checklist because no target files were selected."]
+  };
+}
+
+function buildVerificationReport(state: TicketWorkflowState) {
+  const files = state.codeContext?.relevantFiles.map((file) => file.filePath) ?? [];
+  const framework = detectLikelyTestFramework([...files, state.repoConfig.repoPath]);
+  const commands =
+    framework.includes("npm")
+      ? ["npm test", "npm run typecheck", "npm run build"]
+      : framework === "Maven"
+        ? ["mvn test", "mvn package -DskipTests=false"]
+        : framework === "Gradle"
+          ? ["./gradlew test", "./gradlew build"]
+          : framework === "Ant"
+            ? ["ant test", "ant build"]
+            : [];
+
+  return {
+    status: "not_run" as const,
+    commands:
+      commands.length > 0
+        ? commands.map((command) => ({
+            command,
+            status: "not_run" as const,
+            reason: "Stored as verification plan; command execution requires a trusted repository execution step."
+          }))
+        : [
+            {
+              command: "manual verification",
+              status: "not_run" as const,
+              reason: "No standard test/build command was detected from selected context."
+            }
+          ],
+    summary:
+      commands.length > 0
+        ? `Detected likely ${framework} verification commands but did not execute them automatically.`
+        : "No automatic verification command was detected; use the generated manual checklist.",
+    generatedAt: nowIso()
+  };
+}
+
+function enrichFixProposalWithRepairArtifacts(fixProposal: FixProposal, state: TicketWorkflowState): FixProposal {
+  return fixProposalSchema.parse({
+    ...fixProposal,
+    patchProposal: buildPatchProposal(state, fixProposal),
+    testPlan: buildTestPlan(state),
+    verificationReport: buildVerificationReport(state)
+  });
+}
+
 async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixProposal> {
   const result = await callJsonChat({
     model: env.AI_MODEL_FIX_PROPOSAL,
@@ -509,11 +679,13 @@ async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixP
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmJson({
           ticket: state.ticket,
           analysis: state.analysis,
           priority: state.priority,
           codeContext: state.codeContext,
+          memoryContext: state.codeContext?.memoryContext,
+          graphContext: state.codeContext?.graphContext,
           requiredJsonShape: {
             title: "string",
             hypotheses: ["string"],
@@ -534,6 +706,19 @@ async function buildFixProposalWithLlm(state: TicketWorkflowState): Promise<FixP
 function deterministicMentorDraft(state: TicketWorkflowState): MentorDraft {
   const priority = state.priority ? `${state.priority.level} priority` : "unclassified priority";
   const contextFiles = state.codeContext?.relevantFiles.map((file) => file.filePath).slice(0, 3) ?? [];
+  const repairArtifacts = state.fixProposal
+    ? [
+        state.fixProposal.patchProposal
+          ? `Patch proposal targets ${state.fixProposal.patchProposal.targetFiles.length} file(s) and is manual-review only.`
+          : undefined,
+        state.fixProposal.testPlan
+          ? `Generated ${state.fixProposal.testPlan.cases.length} test case(s) for ${state.fixProposal.testPlan.framework}.`
+          : undefined,
+        state.fixProposal.verificationReport
+          ? `Verification status: ${state.fixProposal.verificationReport.status}. ${state.fixProposal.verificationReport.summary}`
+          : undefined
+      ].filter(Boolean)
+    : [];
 
   return mentorDraftSchema.parse({
     response: [
@@ -542,11 +727,14 @@ function deterministicMentorDraft(state: TicketWorkflowState): MentorDraft {
       contextFiles.length > 0
         ? `Likely code context includes ${contextFiles.join(", ")}.`
         : "Repository context is not strong enough yet; mentor may need more information.",
-      `Recommended next step: ${state.fixProposal?.recommendedApproach ?? "Review the ticket and confirm scope before implementation."}`
+      `Recommended next step: ${state.fixProposal?.recommendedApproach ?? "Review the ticket and confirm scope before implementation."}`,
+      ...repairArtifacts
     ].join(" "),
     checklist: [
       "Confirm reproduction steps and affected environment.",
       "Review selected code context before approving implementation.",
+      "Review the patch proposal and generated test plan before applying any code changes.",
+      "Check verification status and decide whether trusted command execution is required.",
       "Validate proposed risks and verification steps.",
       "Decide whether more information is needed from the reporter."
     ],
@@ -570,7 +758,7 @@ async function buildMentorDraftWithLlm(state: TicketWorkflowState): Promise<Ment
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmJson({
           ticket: state.ticket,
           analysis: state.analysis,
           priority: state.priority,
@@ -580,6 +768,11 @@ async function buildMentorDraftWithLlm(state: TicketWorkflowState): Promise<Ment
           },
           codeContext: state.codeContext,
           fixProposal: state.fixProposal,
+          repairArtifacts: {
+            patchProposal: state.fixProposal?.patchProposal,
+            testPlan: state.fixProposal?.testPlan,
+            verificationReport: state.fixProposal?.verificationReport
+          },
           requiredJsonShape: {
             response: "string",
             checklist: ["string"],
@@ -783,6 +976,8 @@ async function repoSearchNode(input: GraphInput): Promise<GraphInput> {
       strategy: started.repoConfig.retrievalStrategy,
       indexStatus: search.indexStatus,
       results: search.results,
+      dependencyGraph: search.dependencyGraph,
+      memoryMatches: search.memoryMatches,
       searchedAt: nowIso(),
       warnings: search.warnings
     });
@@ -858,6 +1053,7 @@ async function codeContextNode(input: GraphInput): Promise<GraphInput> {
         llmError instanceof Error ? llmError.message : "code context LLM failed"
       }. ${codeContext.summary}`;
     }
+    codeContext = enrichCodeContextWithRepoIntelligence(codeContext, started);
 
     const completed = appendTrace(
       {
@@ -926,6 +1122,7 @@ async function fixProposalNode(input: GraphInput): Promise<GraphInput> {
         llmError instanceof Error ? llmError.message : "fix proposal LLM failed"
       }. ${fixProposal.title}`;
     }
+    fixProposal = enrichFixProposalWithRepairArtifacts(fixProposal, started);
 
     const completed = appendTrace(
       {

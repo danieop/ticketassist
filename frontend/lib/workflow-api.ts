@@ -84,6 +84,28 @@ export type WorkflowApi = {
     repoSearchResults?: {
       queryTerms?: string[];
       semanticQuery?: string;
+      dependencyGraph?: {
+        nodes: {
+          id: string;
+          label: string;
+          kind: string;
+          filePath: string;
+          layer?: string;
+        }[];
+        edges: {
+          from: string;
+          to: string;
+          type: string;
+        }[];
+      };
+      memoryMatches?: {
+        workflowRunId: string;
+        ticketId: string;
+        title: string;
+        score: number;
+        matchedSignals: string[];
+        fixTitle?: string;
+      }[];
       results?: {
         filePath: string;
         score: number;
@@ -105,6 +127,20 @@ export type WorkflowApi = {
         riskNotes?: string[];
       }[];
       riskNotes?: string[];
+      graphContext?: {
+        nodes: string[];
+        edges: string[];
+        summary: string;
+      };
+      memoryContext?: {
+        summary: string;
+        matches: {
+          workflowRunId: string;
+          title: string;
+          score: number;
+          matchedSignals: string[];
+        }[];
+      };
     } | null;
     fixProposal?: {
       title?: string;
@@ -113,6 +149,32 @@ export type WorkflowApi = {
       steps?: string[];
       risks?: string[];
       verificationSteps?: string[];
+      patchProposal?: {
+        strategy: string;
+        targetFiles: string[];
+        proposedDiff: string;
+        applyMode: "manual_review";
+        confidence: number;
+      };
+      testPlan?: {
+        framework: string;
+        cases: {
+          name: string;
+          type: string;
+          steps: string[];
+          expectedResult: string;
+        }[];
+        generatedArtifacts: string[];
+      };
+      verificationReport?: {
+        status: "pass" | "fail" | "partial" | "not_run";
+        commands: {
+          command: string;
+          status: "pass" | "fail" | "not_run";
+          reason?: string;
+        }[];
+        summary: string;
+      };
       confidence?: number;
     } | null;
     mentorDraft?: {

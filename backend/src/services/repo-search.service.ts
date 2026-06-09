@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
 import { createEmbeddingClient, toPgVectorLiteral } from "./embedding.service.js";
+import { redactText } from "./redaction.service.js";
 import { repositoryService } from "./repository.service.js";
 import type {
   PriorityClassification,
@@ -131,6 +132,24 @@ type ChunkBoundary = {
   confidence?: number;
 };
 type ChunkSearchSource = "vector" | "keyword";
+type GraphNode = {
+  id: string;
+  label: string;
+  kind: string;
+  filePath: string;
+  startLine?: number;
+  endLine?: number;
+  language?: string;
+  layer?: string;
+  confidence?: number;
+};
+type GraphEdge = {
+  from: string;
+  to: string;
+  type: string;
+  confidence?: number;
+  evidence?: string;
+};
 
 type RepositoryWithFiles = CodeRepository & {
   files: CodeRepositoryFile[];
@@ -247,6 +266,42 @@ function getSymbolConfidence(input: {
   }
 
   return 0.4;
+}
+
+function inferLayer(filePath: string, symbols: string[] = []) {
+  const text = `${filePath} ${symbols.join(" ")}`.toLowerCase();
+
+  if (/\b(controller|servlet|route|router|handler|endpoint|page)\b/.test(text)) {
+    return "controller";
+  }
+
+  if (/\b(service|usecase|interactor|manager)\b/.test(text)) {
+    return "service";
+  }
+
+  if (/\b(dao|repository|repo|mapper|dal|gateway)\b/.test(text)) {
+    return "dao";
+  }
+
+  if (/\b(model|entity|dto|schema|domain|viewmodel)\b/.test(text)) {
+    return "model";
+  }
+
+  if (/\b(test|spec)\b/.test(text)) {
+    return "test";
+  }
+
+  return undefined;
+}
+
+function getMetadataString(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function getMetadataNumber(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "number" ? value : undefined;
 }
 
 function extractSymbols(content: string) {
@@ -1109,7 +1164,9 @@ function mergeResults(
     for (const [index, result] of providerResults.items.entries()) {
       const key = result.chunkId ?? `${result.filePath}:${result.startLine ?? 0}:${result.endLine ?? 0}`;
       const existing = merged.get(key);
-      const candidateScore = normalizeProviderScore(result, providerResults.source, index + 1);
+      const symbolBoost = (result.symbols?.length ?? 0) > 0 ? 0.08 : 0;
+      const layerBoost = inferLayer(result.filePath, result.symbols) ? 0.05 : 0;
+      const candidateScore = normalizeProviderScore(result, providerResults.source, index + 1) + symbolBoost + layerBoost;
 
       if (!existing) {
         merged.set(key, {
@@ -1120,6 +1177,10 @@ function mergeResults(
             retrievalSources: [providerResults.source],
             providerScores: {
               [providerResults.source]: candidateScore
+            },
+            scoreSignals: {
+              symbolBoost,
+              layerBoost
             }
           }
         });
@@ -1148,6 +1209,12 @@ function mergeResults(
           providerScores: {
             ...previousProviderScores,
             [providerResults.source]: candidateScore
+          },
+          scoreSignals: {
+            ...((existingMetadata.scoreSignals as Record<string, number>) ?? {}),
+            symbolBoost: Math.max(Number((existingMetadata.scoreSignals as Record<string, number>)?.symbolBoost ?? 0), symbolBoost),
+            layerBoost: Math.max(Number((existingMetadata.scoreSignals as Record<string, number>)?.layerBoost ?? 0), layerBoost),
+            overlapBoost: 0.2
           }
         }
       });
@@ -1161,6 +1228,186 @@ function mergeResults(
       ...result,
       score: Number(result.score.toFixed(4))
     }));
+}
+
+function redactSearchResult(result: RepoSearchResult): RepoSearchResult {
+  return {
+    ...result,
+    snippet: result.snippet ? redactText(result.snippet) : undefined,
+    matchedLines: result.matchedLines?.map((line) => ({
+      ...line,
+      text: redactText(line.text)
+    }))
+  };
+}
+
+function buildDependencyGraph(results: RepoSearchResult[]) {
+  const nodes = new Map<string, GraphNode>();
+  const edges: GraphEdge[] = [];
+
+  for (const result of results) {
+    const metadata = result.metadata ?? {};
+    const symbolPath = getMetadataString(metadata, "symbolPath");
+    const chunkKind = getMetadataString(metadata, "chunkKind") ?? getMetadataString(metadata, "chunkType") ?? "chunk";
+    const primarySymbol = getMetadataString(metadata, "primarySymbol");
+    const nodeId = symbolPath ?? `${result.filePath}:${result.startLine ?? 1}:${result.endLine ?? result.startLine ?? 1}`;
+    const layer = inferLayer(result.filePath, result.symbols);
+
+    nodes.set(nodeId, {
+      id: nodeId,
+      label: primarySymbol ?? result.symbols?.[0] ?? path.basename(result.filePath),
+      kind: chunkKind,
+      filePath: result.filePath,
+      startLine: result.startLine,
+      endLine: result.endLine,
+      language: getMetadataString(metadata, "language"),
+      layer,
+      confidence: getMetadataNumber(metadata, "symbolConfidence") ?? 0.45
+    });
+
+    for (const symbol of result.symbols ?? []) {
+      const symbolNodeId = `${result.filePath}#${symbol}`;
+
+      if (!nodes.has(symbolNodeId)) {
+        nodes.set(symbolNodeId, {
+          id: symbolNodeId,
+          label: symbol,
+          kind: "symbol",
+          filePath: result.filePath,
+          language: getMetadataString(metadata, "language"),
+          layer,
+          confidence: 0.55
+        });
+      }
+
+      if (symbolNodeId !== nodeId) {
+        edges.push({
+          from: nodeId,
+          to: symbolNodeId,
+          type: "contains",
+          confidence: 0.55,
+          evidence: "Symbol appeared in chunk metadata"
+        });
+      }
+    }
+  }
+
+  const nodeValues = [...nodes.values()].slice(0, 80);
+  const layerGroups = new Map<string, GraphNode[]>();
+
+  for (const node of nodeValues) {
+    if (!node.layer) {
+      continue;
+    }
+
+    layerGroups.set(node.layer, [...(layerGroups.get(node.layer) ?? []), node]);
+  }
+
+  const controllers = layerGroups.get("controller") ?? [];
+  const services = layerGroups.get("service") ?? [];
+  const daos = layerGroups.get("dao") ?? [];
+  const models = layerGroups.get("model") ?? [];
+
+  for (const controller of controllers.slice(0, 8)) {
+    for (const service of services.slice(0, 8)) {
+      edges.push({
+        from: controller.id,
+        to: service.id,
+        type: "routes_to",
+        confidence: 0.35,
+        evidence: "Layer proximity inferred from retrieved context"
+      });
+    }
+  }
+
+  for (const service of services.slice(0, 8)) {
+    for (const dao of daos.slice(0, 8)) {
+      edges.push({
+        from: service.id,
+        to: dao.id,
+        type: "calls",
+        confidence: 0.32,
+        evidence: "Layer proximity inferred from retrieved context"
+      });
+    }
+  }
+
+  for (const dao of daos.slice(0, 8)) {
+    for (const model of models.slice(0, 8)) {
+      edges.push({
+        from: dao.id,
+        to: model.id,
+        type: "reads_from",
+        confidence: 0.3,
+        evidence: "Layer proximity inferred from retrieved context"
+      });
+    }
+  }
+
+  return {
+    nodes: nodeValues,
+    edges: edges.slice(0, 120),
+    generatedAt: new Date().toISOString()
+  };
+}
+
+async function findTicketMemoryMatches(input: RepoSearchInput) {
+  const queryTerms = input.queryTerms.map((term) => term.toLowerCase());
+
+  if (queryTerms.length === 0) {
+    return [];
+  }
+
+  const workflows = await prisma.workflowRun.findMany({
+    where: {
+      repositoryId: input.repositoryId,
+      status: {
+        in: ["MENTOR_DRAFT_READY", "WAITING_FOR_REVIEW", "REVIEWED"]
+      }
+    },
+    include: {
+      ticket: true,
+      state: true,
+      mentorReview: true
+    },
+    orderBy: {
+      startedAt: "desc"
+    },
+    take: 40
+  });
+
+  return workflows
+    .map((workflow) => {
+      const state = workflow.state;
+      const text = [
+        workflow.ticket.title,
+        workflow.ticket.description,
+        JSON.stringify(state?.ticketAnalysis ?? {}),
+        JSON.stringify(state?.codeContext ?? {}),
+        JSON.stringify(state?.fixProposal ?? {})
+      ]
+        .join(" ")
+        .toLowerCase();
+      const matchedSignals = queryTerms.filter((term) => text.includes(term)).slice(0, 12);
+      const score = matchedSignals.length / Math.max(6, queryTerms.length);
+      const fixProposal = state?.fixProposal as { title?: string } | null;
+      const ticketAnalysis = state?.ticketAnalysis as { summary?: string } | null;
+
+      return {
+        workflowRunId: workflow.id,
+        ticketId: workflow.ticketId,
+        title: workflow.ticket.title,
+        score: Number(score.toFixed(4)),
+        status: workflow.status,
+        matchedSignals,
+        summary: ticketAnalysis?.summary,
+        fixTitle: fixProposal?.title,
+        reviewedDecision: workflow.mentorReview?.decision
+      };
+    })
+    .filter((match) => match.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5);
 }
 
 export const repoSearchService = {
@@ -1206,7 +1453,9 @@ export const repoSearchService = {
       });
     }
 
-    const results = mergeResults(providerResults, input.maxResults);
+    const results = mergeResults(providerResults, input.maxResults).map(redactSearchResult);
+    const dependencyGraph = buildDependencyGraph(results);
+    const memoryMatches = await findTicketMemoryMatches(input);
 
     if (results.length === 0) {
       warnings.push("No relevant repository snippets were found.");
@@ -1219,6 +1468,8 @@ export const repoSearchService = {
     return {
       indexStatus,
       results,
+      dependencyGraph,
+      memoryMatches,
       warnings
     };
   }
