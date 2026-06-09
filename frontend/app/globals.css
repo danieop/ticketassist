@@ -1835,10 +1835,12 @@ button:disabled {
 }
 
 .workflow-row {
+  --workflow-row-height: 58px;
   display: grid;
   grid-template-columns: minmax(260px, 1.5fr) minmax(130px, 0.75fr) 150px 110px minmax(190px, 1fr);
   gap: 14px;
   align-items: center;
+  min-height: var(--workflow-row-height);
   min-width: 960px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1927,6 +1929,7 @@ button:disabled {
 }
 
 .workflow-row-skeleton {
+  height: var(--workflow-row-height);
   pointer-events: none;
 }
 
