@@ -6,8 +6,11 @@ import {
   listTickets,
   updateTicket
 } from "../controllers/ticket.controller.js";
+import { requireAuth, requireRole } from "../middlewares/auth.js";
 
 export const ticketRouter = Router();
+
+ticketRouter.use(requireAuth);
 
 /**
  * @openapi
@@ -55,7 +58,7 @@ ticketRouter.get("/", listTickets);
  *       400:
  *         description: Invalid ticket
  */
-ticketRouter.post("/", createTicket);
+ticketRouter.post("/", requireRole("DEVELOPER", "ADMIN"), createTicket);
 
 /**
  * @openapi
@@ -103,7 +106,7 @@ ticketRouter.get("/:id", getTicket);
  *       404:
  *         description: Ticket not found
  */
-ticketRouter.patch("/:id", updateTicket);
+ticketRouter.patch("/:id", requireRole("DEVELOPER", "ADMIN"), updateTicket);
 
 /**
  * @openapi
@@ -124,4 +127,4 @@ ticketRouter.patch("/:id", updateTicket);
  *       404:
  *         description: Ticket not found
  */
-ticketRouter.delete("/:id", deleteTicket);
+ticketRouter.delete("/:id", requireRole("DEVELOPER", "ADMIN"), deleteTicket);

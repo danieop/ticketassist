@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LoadingSpinner } from "./loading-spinner";
+import { getAuthHeaders } from "@/lib/auth-client";
 
 type RepositoryStatus = "READY" | "FAILED";
 
@@ -195,7 +196,9 @@ export function CodebaseBrowser() {
     setIsLoadingRepositories(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/repositories`);
+      const response = await fetch(`${apiBaseUrl}/api/repositories`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error("Unable to load repositories");
@@ -220,7 +223,9 @@ export function CodebaseBrowser() {
     setSelectedPath("");
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/repositories/${id}`);
+      const response = await fetch(`${apiBaseUrl}/api/repositories/${id}`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error("Unable to load repository");
@@ -246,7 +251,9 @@ export function CodebaseBrowser() {
 
     try {
       const params = new URLSearchParams({ path: relativePath });
-      const response = await fetch(`${apiBaseUrl}/api/repositories/${repositoryId}/files/content?${params}`);
+      const response = await fetch(`${apiBaseUrl}/api/repositories/${repositoryId}/files/content?${params}`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error("Unable to load file content");
@@ -311,6 +318,7 @@ export function CodebaseBrowser() {
 
       const response = await fetch(`${apiBaseUrl}/api/repositories/upload`, {
         method: "POST",
+        headers: getAuthHeaders(),
         body: formData
       });
 

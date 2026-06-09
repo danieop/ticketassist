@@ -10,6 +10,7 @@ import {
   type ReviewDecision,
   type WorkflowApi
 } from "@/lib/workflow-api";
+import { getAuthHeaders } from "@/lib/auth-client";
 
 const reviewDecisions: { value: ReviewDecision; label: string }[] = [
   { value: "APPROVED", label: "Approve" },
@@ -54,7 +55,9 @@ export function MentorReviewQueue() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/workflows?status=waiting_for_review&limit=50`);
+      const response = await fetch(`${apiBaseUrl}/api/workflows?status=waiting_for_review&limit=50`, {
+        headers: getAuthHeaders()
+      });
 
       if (!response.ok) {
         throw new Error(await getResponseErrorMessage(response));
@@ -91,7 +94,7 @@ export function MentorReviewQueue() {
     try {
       const response = await fetch(`${apiBaseUrl}/api/workflows/${selectedWorkflow.id}/review`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           decision,
           comment: comment.trim(),
