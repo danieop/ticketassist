@@ -126,7 +126,7 @@ function getAgentPromptPreview(agentName: string, state: TicketWorkflowState) {
 
   if (agentName === "RepoSearchAgent") {
     return compactJson({
-      system: "Generate focused repository query terms and semantic search query from ticket analysis and priority.",
+      system: "Generate focused repository query terms and semantic search query from ticket analysis and optional priority.",
       user: input
     });
   }
@@ -934,16 +934,14 @@ async function repoSearchNode(input: GraphInput): Promise<GraphInput> {
   });
 
   try {
-    if (started.status !== "priority_classified") {
-      throw new Error(`RepoSearchAgent expected status priority_classified but received ${started.status}`);
+    if (started.status !== "ticket_analyzed" && started.status !== "priority_classified") {
+      throw new Error(
+        `RepoSearchAgent expected status ticket_analyzed or priority_classified but received ${started.status}`
+      );
     }
 
     if (!started.analysis) {
       throw new Error("Ticket analysis is required before repository search");
-    }
-
-    if (!started.priority) {
-      throw new Error("Priority classification is required before repository search");
     }
 
     if (!started.repoConfig.repositoryId || !started.repoConfig.repoPath) {
@@ -1266,6 +1264,41 @@ const compiledWorkflowGraph = new StateGraph(WorkflowAnnotation)
 export async function runTicketWorkflow(initialState: TicketWorkflowState) {
   const result = await compiledWorkflowGraph.invoke({ state: initialState });
   return result.state;
+}
+
+function getStateDelta(base: TicketWorkflowState, next: TicketWorkflowState) {
+  return {
+    trace: next.trace.slice(base.trace.length),
+    errors: next.errors.slice(base.errors.length)
+  };
+}
+
+export async function runPriorityAndRepoSearchAgents(state: TicketWorkflowState) {
+  if (state.status !== "ticket_analyzed") {
+    throw new Error(`Priority and repository search expected status ticket_analyzed but received ${state.status}`);
+  }
+
+  const [priorityResult, repoSearchResult] = await Promise.all([
+    priorityClassifierNode({ state }),
+    repoSearchNode({ state })
+  ]);
+  const priorityState = priorityResult.state;
+  const repoSearchState = repoSearchResult.state;
+  const priorityDelta = getStateDelta(state, priorityState);
+  const repoSearchDelta = getStateDelta(state, repoSearchState);
+  const failed = priorityState.status === "failed" || repoSearchState.status === "failed";
+
+  return {
+    ...state,
+    status: failed ? "failed" : ("repo_searched" as const),
+    priority: priorityState.priority ?? state.priority,
+    repoSearch: repoSearchState.repoSearch ?? state.repoSearch,
+    errors: [...state.errors, ...priorityDelta.errors, ...repoSearchDelta.errors],
+    trace: [...state.trace, ...priorityDelta.trace, ...repoSearchDelta.trace].sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt)
+    ),
+    updatedAt: nowIso()
+  } satisfies TicketWorkflowState;
 }
 
 export const workflowAgentSequence = [

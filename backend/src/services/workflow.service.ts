@@ -8,6 +8,7 @@ import {
   getAgentForCompletedStatus,
   getNextWorkflowAgent,
   type WorkflowAgentType,
+  runPriorityAndRepoSearchAgents,
   rerunCompletedWorkflowAgent,
   runNextWorkflowAgent,
   workflowAgentSequence
@@ -630,8 +631,18 @@ async function findWorkflowOrThrow(id: string) {
 
 async function runNextAndPersist(workflowRunId: string, state: TicketWorkflowState) {
   const agent = getNextWorkflowAgent(state.status);
-  const nextState = await runNextWorkflowAgent(state);
-  const versionedState = agent ? addAgentVersionMeta(nextState, agent.type, "agent_run") : nextState;
+  const nextState =
+    state.status === "ticket_analyzed" ? await runPriorityAndRepoSearchAgents(state) : await runNextWorkflowAgent(state);
+  const versionedState =
+    state.status === "ticket_analyzed"
+      ? addAgentVersionMeta(
+          addAgentVersionMeta(nextState, "PRIORITY_CLASSIFIER", "agent_run"),
+          "REPO_SEARCH",
+          "agent_run"
+        )
+      : agent
+        ? addAgentVersionMeta(nextState, agent.type, "agent_run")
+        : nextState;
   await persistWorkflowOutcome(workflowRunId, versionedState);
 }
 
