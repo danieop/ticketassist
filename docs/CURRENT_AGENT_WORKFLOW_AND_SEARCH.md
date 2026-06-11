@@ -142,7 +142,7 @@ Responsibility:
 Current implementation:
 
 - Uses the configured OpenAI-compatible chat/completions provider.
-- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-5.3-codex`.
 - Requests JSON-only structured output.
 - Validates the LLM response with Zod before storing it.
 - Falls back to deterministic analysis only if the provider call or JSON validation fails.
@@ -184,7 +184,7 @@ Responsibility:
 Current implementation:
 
 - Uses the configured OpenAI-compatible chat/completions provider.
-- Model: `AI_MODEL_PRIORITY`, currently `gpt-4.1-mini`.
+- Model: `AI_MODEL_PRIORITY`, currently `gpt-5.3-codex`.
 - Sends the ticket plus prior analysis and explicit priority rules.
 - Requests JSON-only structured output.
 - Validates the LLM response with Zod before storing it.
@@ -246,7 +246,7 @@ Responsibility:
 Current implementation:
 
 - Uses the configured OpenAI-compatible chat/completions provider.
-- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-5.3-codex`.
 - Sends only the top focused search results, not the whole repository.
 - Falls back to deterministic selection from ranked search results if the provider call or JSON validation fails.
 
@@ -270,7 +270,7 @@ Responsibility:
 Current implementation:
 
 - Uses the configured OpenAI-compatible chat/completions provider.
-- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-5.3-codex`.
 - Falls back to a deterministic constrained proposal if the provider call or JSON validation fails.
 
 Success status:
@@ -293,7 +293,7 @@ Responsibility:
 Current implementation:
 
 - Uses the configured OpenAI-compatible chat/completions provider.
-- Model: `AI_MODEL_ANALYZER`, currently `gpt-4.1-mini`.
+- Model: `AI_MODEL_ANALYZER`, currently `gpt-5.3-codex`.
 - Falls back to a deterministic mentor draft if the provider call or JSON validation fails.
 
 Success status:
@@ -393,8 +393,8 @@ Environment:
 ```env
 AI_BASE_URL=https://api.shopaikey.com/v1
 OPENAI_API_KEY=...
-AI_MODEL_ANALYZER=gpt-4.1-mini
-AI_MODEL_PRIORITY=gpt-4.1-mini
+AI_MODEL_ANALYZER=gpt-5.3-codex
+AI_MODEL_PRIORITY=gpt-5.3-codex
 EMBEDDING_MODEL=text-embedding-3-small
 ```
 

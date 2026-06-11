@@ -157,6 +157,7 @@ model WorkflowRun {
   traceLogs         TraceLog[]
   repoSearchResults RepoSearchResult[]
   mentorReview      MentorReview?
+  workflowJobs      WorkflowJob[]
 
   @@index([ticketId])
   @@index([repositoryId])
@@ -291,4 +292,28 @@ model MentorReview {
   reviewedAt    DateTime       @default(now())
 
   @@index([mentorId])
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model WorkflowJob {
+  id            String      @id @default(cuid())
+  workflowRunId String
+  label         String
+  status        JobStatus   @default(PENDING)
+  error         String?
+  actionType    String
+  actionPayload Json
+  createdAt     DateTime    @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  workflowRun   WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  
+  @@index([status])
+  @@index([workflowRunId])
 }

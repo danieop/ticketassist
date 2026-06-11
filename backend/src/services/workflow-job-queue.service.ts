@@ -1,84 +1,126 @@
-type WorkflowJob = {
-  id: string;
-  workflowRunId: string;
-  label: string;
-  createdAt: string;
-  run: () => Promise<void>;
-};
+import { prisma } from "../config/prisma.js";
+import { type Prisma } from "@prisma/client";
 
-const pendingJobs: WorkflowJob[] = [];
-const completedJobs: { id: string; workflowRunId: string; label: string; finishedAt: string }[] = [];
-const failedJobs: { id: string; workflowRunId: string; label: string; error: string; finishedAt: string }[] = [];
-let activeJob: WorkflowJob | null = null;
+const handlers = new Map<string, (payload: any) => Promise<void>>();
 
-async function drainQueue() {
-  if (activeJob || pendingJobs.length === 0) {
-    return;
-  }
+let isPolling = false;
+let activeJobId: string | null = null;
 
-  activeJob = pendingJobs.shift() ?? null;
-
-  if (!activeJob) {
-    return;
-  }
+async function pollQueue() {
+  if (isPolling) return;
+  isPolling = true;
 
   try {
-    await activeJob.run();
-    completedJobs.unshift({
-      id: activeJob.id,
-      workflowRunId: activeJob.workflowRunId,
-      label: activeJob.label,
-      finishedAt: new Date().toISOString()
+    const job = await prisma.$transaction(async (tx) => {
+      const pendingJob = await tx.workflowJob.findFirst({
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" }
+      });
+
+      if (!pendingJob) return null;
+
+      return tx.workflowJob.update({
+        where: { id: pendingJob.id },
+        data: {
+          status: "RUNNING",
+          startedAt: new Date()
+        }
+      });
     });
-  } catch (error) {
-    failedJobs.unshift({
-      id: activeJob.id,
-      workflowRunId: activeJob.workflowRunId,
-      label: activeJob.label,
-      error: error instanceof Error ? error.message : "Workflow job failed",
-      finishedAt: new Date().toISOString()
-    });
-  } finally {
-    completedJobs.splice(20);
-    failedJobs.splice(20);
-    activeJob = null;
-    void drainQueue();
+
+    if (!job) {
+      isPolling = false;
+      return;
+    }
+
+    activeJobId = job.id;
+
+    const handler = handlers.get(job.actionType);
+    if (!handler) {
+      throw new Error(`No handler registered for actionType: ${job.actionType}`);
+    }
+
+    try {
+      await handler(job.actionPayload);
+
+      await prisma.workflowJob.update({
+        where: { id: job.id },
+        data: {
+          status: "COMPLETED",
+          finishedAt: new Date()
+        }
+      });
+    } catch (error) {
+      await prisma.workflowJob.update({
+        where: { id: job.id },
+        data: {
+          status: "FAILED",
+          error: error instanceof Error ? error.message : "Workflow job failed",
+          finishedAt: new Date()
+        }
+      });
+    } finally {
+      activeJobId = null;
+    }
+
+    // Process next job immediately
+    setTimeout(() => {
+      isPolling = false;
+      void pollQueue();
+    }, 0);
+  } catch (err) {
+    console.error("Queue polling error:", err);
+    isPolling = false;
   }
 }
 
+let pollingInterval: NodeJS.Timeout | null = null;
+
 export const workflowJobQueue = {
-  enqueue(input: { workflowRunId: string; label: string; run: () => Promise<void> }) {
-    const job: WorkflowJob = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      workflowRunId: input.workflowRunId,
-      label: input.label,
-      createdAt: new Date().toISOString(),
-      run: input.run
-    };
+  registerWorker(actionType: string, handler: (payload: any) => Promise<void>) {
+    handlers.set(actionType, handler);
+  },
 
-    pendingJobs.push(job);
-    void drainQueue();
+  startWorker() {
+    if (pollingInterval) return;
+    void pollQueue();
+    pollingInterval = setInterval(() => {
+      void pollQueue();
+    }, 5000);
+  },
 
+  async enqueue(input: { workflowRunId: string; label: string; actionType: string; actionPayload: Prisma.InputJsonValue }) {
+    const job = await prisma.workflowJob.create({
+      data: {
+        workflowRunId: input.workflowRunId,
+        label: input.label,
+        actionType: input.actionType,
+        actionPayload: input.actionPayload
+      }
+    });
+
+    void pollQueue();
     return job;
   },
 
-  stats() {
+  async stats() {
+    const pending = await prisma.workflowJob.count({ where: { status: "PENDING" } });
+    const runningJobs = await prisma.workflowJob.findMany({ where: { status: "RUNNING" } });
+    const completedJobs = await prisma.workflowJob.findMany({
+      where: { status: "COMPLETED" },
+      orderBy: { finishedAt: "desc" },
+      take: 20
+    });
+    const failedJobs = await prisma.workflowJob.findMany({
+      where: { status: "FAILED" },
+      orderBy: { finishedAt: "desc" },
+      take: 20
+    });
+
     return {
-      pending: pendingJobs.length,
-      pendingJobs: pendingJobs.map((job) => ({
-        id: job.id,
-        workflowRunId: job.workflowRunId,
-        label: job.label,
-        createdAt: job.createdAt
-      })),
-      active: activeJob
-        ? {
-            id: activeJob.id,
-            workflowRunId: activeJob.workflowRunId,
-            label: activeJob.label,
-            createdAt: activeJob.createdAt
-          }
-        : null,
+      pending,
+      pendingJobs: [], // omitted for brevity
+      active: runningJobs.length > 0 ? runningJobs[0] : null,
       completed: completedJobs,
       failed: failedJobs
     };

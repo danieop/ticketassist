@@ -1126,11 +1126,11 @@ function DeveloperWorkflowWorkspace({ workflowId }: { workflowId?: string }) {
             </div>
             <div>
               <span>Queue completed</span>
-              <strong>{dashboard?.queue.completed.length ?? 0}</strong>
+              <strong>{dashboard?.queue.completed?.length ?? 0}</strong>
             </div>
             <div>
               <span>Queue failed</span>
-              <strong>{dashboard?.queue.failed.length ?? 0}</strong>
+              <strong>{dashboard?.queue.failed?.length ?? 0}</strong>
             </div>
           </div>
           {message ? <p className="repo-status-message">{message}</p> : null}
