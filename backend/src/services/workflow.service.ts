@@ -705,7 +705,8 @@ function enqueueNextAgent(workflowRunId: string, state: TicketWorkflowState, lab
   return workflowJobQueue.enqueue({
     workflowRunId,
     label,
-    run: () => runNextAndPersist(workflowRunId, state)
+    actionType: "NEXT_AGENT",
+    actionPayload: { workflowRunId, state }
   });
 }
 
@@ -718,41 +719,8 @@ function enqueueRerunAgent(
   return workflowJobQueue.enqueue({
     workflowRunId,
     label,
-    run: async () => {
-      const nextState = input.agentType
-        ? await runNextWorkflowAgent(state)
-        : await rerunCompletedWorkflowAgent(state);
-
-      if (input.agentType) {
-        const rerunIndex = getAgentSequenceIndex(input.agentType as WorkflowAgentType);
-        nextState.workflowMeta = {
-          ...(nextState.workflowMeta ?? {}),
-          staleAgentTypes: workflowAgentSequence.slice(rerunIndex + 1).map((agent) => agent.type)
-        };
-      } else {
-        const rerunAgent = getAgentForCompletedStatus(state.status);
-        nextState.workflowMeta = {
-          ...(nextState.workflowMeta ?? {}),
-          reruns: [
-            ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
-            {
-              agentType: rerunAgent?.type,
-              invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
-              invalidatedTrace: rerunAgent
-                ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
-                : [],
-              createdAt: nowIso()
-            }
-          ]
-        };
-      }
-
-      const versionedState = input.agentType
-        ? addAgentVersionMeta(nextState, input.agentType as WorkflowAgentType, "agent_run")
-        : nextState;
-
-      await persistWorkflowOutcome(workflowRunId, versionedState);
-    }
+    actionType: "RERUN_AGENT",
+    actionPayload: { workflowRunId, state, input }
   });
 }
 
@@ -945,7 +913,7 @@ export const workflowService = {
       rerunCount,
       editCount,
       mentorDecisions: Object.fromEntries(reviews.map((row) => [row.decision, row._count._all])),
-      queue: workflowJobQueue.stats()
+      queue: await workflowJobQueue.stats()
     };
   },
 
@@ -1304,3 +1272,44 @@ export const workflowService = {
     return mapWorkflow(await findWorkflowOrThrow(id));
   }
 };
+
+workflowJobQueue.registerWorker("NEXT_AGENT", async (payload: any) => {
+  await runNextAndPersist(payload.workflowRunId, payload.state);
+});
+
+workflowJobQueue.registerWorker("RERUN_AGENT", async (payload: any) => {
+  const { workflowRunId, state, input } = payload;
+  const nextState = input.agentType
+    ? await runNextWorkflowAgent(state)
+    : await rerunCompletedWorkflowAgent(state);
+
+  if (input.agentType) {
+    const rerunIndex = getAgentSequenceIndex(input.agentType as WorkflowAgentType);
+    nextState.workflowMeta = {
+      ...(nextState.workflowMeta ?? {}),
+      staleAgentTypes: workflowAgentSequence.slice(rerunIndex + 1).map((agent) => agent.type)
+    };
+  } else {
+    const rerunAgent = getAgentForCompletedStatus(state.status);
+    nextState.workflowMeta = {
+      ...(nextState.workflowMeta ?? {}),
+      reruns: [
+        ...(((state.workflowMeta?.reruns as unknown[]) ?? [])),
+        {
+          agentType: rerunAgent?.type,
+          invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
+          invalidatedTrace: rerunAgent
+            ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
+            : [],
+          createdAt: nowIso()
+        }
+      ]
+    };
+  }
+
+  const versionedState = input.agentType
+    ? addAgentVersionMeta(nextState, input.agentType as WorkflowAgentType, "agent_run")
+    : nextState;
+
+  await persistWorkflowOutcome(workflowRunId, versionedState);
+});
