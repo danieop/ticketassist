@@ -126,3 +126,22 @@ export const reviewWorkflow: RequestHandler = async (request, response, next) =>
     next(error);
   }
 };
+
+export const getQualityDashboard: RequestHandler = async (_request, response, next) => {
+  try {
+    response.json(await workflowService.quality());
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAgentQualityDetail: RequestHandler = async (request, response, next) => {
+  try {
+    const agentType = getParamId(request.params.agentType);
+    const page = typeof request.query.page === "string" ? parseInt(request.query.page) : undefined;
+    const limit = typeof request.query.limit === "string" ? parseInt(request.query.limit) : undefined;
+    response.json(await workflowService.agentQualityDetail(agentType, page, limit));
+  } catch (error) {
+    next(error);
+  }
+};

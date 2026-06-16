@@ -297,6 +297,52 @@ export type WorkflowDashboardApi = {
   };
 };
 
+export type AgentQualitySummaryApi = {
+  label: string;
+  totalRuns: number;
+  llmRuns: number;
+  fallbackRuns: number;
+  averageLatencyMs: number;
+  reviewedWorkflows: number;
+  approvedWorkflows: number;
+  rejectedWorkflows: number;
+  needsInfoWorkflows: number;
+  totalEdits: number;
+  totalReruns: number;
+  workflowsWithEdits: number;
+  workflowsWithReruns: number;
+};
+
+export type QualityDashboardApi = {
+  totalReviewed: number;
+  approvalRate: number;
+  reworkRate: number;
+  rejectionRate: number;
+  agents: Record<string, AgentQualitySummaryApi>;
+  agentLabels: Record<string, string>;
+};
+
+export type AgentQualityDetailItemApi = {
+  workflowRunId: string;
+  ticketTitle: string;
+  workflowStatus: string;
+  agentRunId: string;
+  usedLlm: boolean;
+  latencyMs: number | null;
+  mentorDecision: string | null;
+  editCount: number;
+  rerunCount: number;
+  createdAt: string;
+};
+
+export type AgentQualityDetailApi = {
+  items: AgentQualityDetailItemApi[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
 export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 export async function getResponseErrorMessage(response: Response) {

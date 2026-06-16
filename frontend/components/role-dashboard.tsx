@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation"; // Dùng next/navigation cho App Router
+import { useRouter } from "next/navigation";
 
-type RoleKey = "developer" | "mentor" | "admin";
+type RoleKey = "developer" | "mentor" | "admin" | "quality";
 
 type RoleDashboardProps = {
   role: RoleKey;
@@ -122,6 +122,16 @@ const dashboards = {
       "Review users with ADMIN role",
       "Track workflow failure rate before enabling AI agents"
     ]
+  },
+  quality: {
+    eyebrow: "AI Quality",
+    title: "Agent accuracy and review correlation",
+    description: "Monitor LLM fallback rates, approval correlation, and edit/rerun patterns per agent.",
+    metrics: [],
+    primaryTitle: "",
+    items: [],
+    secondaryTitle: "",
+    checklist: []
   }
 } as const;
 
@@ -150,20 +160,19 @@ export function RoleDashboard({ role, children }: RoleDashboardProps) {
 const handleSwitchAccount = async (e: React.MouseEvent) => {
   e.preventDefault();
 
-  // 1. Xóa toàn bộ Cookies
   document.cookie = "ticketassist_access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
   document.cookie = "ticketassist_user_role=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
 
-  // 2. Xóa toàn bộ LocalStorage (ĐÂY LÀ PHẦN BỔ SUNG QUAN TRỌNG)
   localStorage.removeItem("ticketassist_access_token");
   localStorage.removeItem("ticketassist_refresh_token");
   localStorage.removeItem("ticketassist_token");
   localStorage.removeItem("ticketassist_user");
 
-  // 3. Chuyển hướng và làm mới cache
   router.push("/login");
   router.refresh(); 
 };
+
+  const isQualityPage = role === "quality";
 
   return (
     <main className="role-shell">
@@ -174,6 +183,21 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
           <p>{headerDescription}</p>
         </div>
         <div className="topbar-actions">
+          {isQualityPage && (
+            <>
+              <Link className="secondary-action" href="/mentor">
+                Mentor
+              </Link>
+              <Link className="secondary-action" href="/admin">
+                Admin
+              </Link>
+            </>
+          )}
+          {!isQualityPage && (role === "mentor" || role === "admin") && (
+            <Link className="secondary-action" href="/quality">
+              Quality
+            </Link>
+          )}
           <Link className="secondary-action" href="/tickets">
             Tickets
           </Link>
@@ -186,48 +210,6 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
           </button>
         </div>
       </header>
-
-      {/* <section className="metrics-row" aria-label={`${dashboard.eyebrow} metrics`}>
-        {dashboard.metrics.map((metric) => (
-          <article
-            className={`metric-card ${"tone" in metric ? `metric-${metric.tone}` : ""}`}
-            key={metric.label}
-          >
-            <p>{metric.label}</p>
-            <strong>{metric.value}</strong>
-          </article>
-        ))}
-      </section> */}
-
-      {/* <section className="role-grid">
-        <div className="panel">
-          <div className="panel-heading">
-            <p className="eyebrow">{dashboard.primaryTitle}</p>
-            <h2>Today</h2>
-          </div>
-          <div className="role-list">
-            {dashboard.items.map((item) => (
-              <article key={item.title}>
-                <span>{item.meta}</span>
-                <h3>{item.title}</h3>
-                <p>{item.body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-
-        <aside className="panel">
-          <div className="panel-heading">
-            <p className="eyebrow">{dashboard.secondaryTitle}</p>
-            <h2>Focus</h2>
-          </div>
-          <ul className="clean-list">
-            {dashboard.checklist.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </aside>
-      </section> */}
 
       {children}
     </main>

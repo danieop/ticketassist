@@ -1,4 +1,4 @@
-import { Prisma, type WorkflowStatus as DbWorkflowStatus } from "@prisma/client";
+import { Prisma, type WorkflowStatus as DbWorkflowStatus, type AgentType } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
@@ -21,7 +21,8 @@ import {
   repoSearchSchema,
   ticketAnalysisSchema,
   type TicketWorkflowState,
-  type WorkflowStatus
+  type WorkflowStatus,
+  type WorkflowTraceEntry
 } from "./workflow-state.js";
 import { nowIso } from "./workflow-state.js";
 import type {
@@ -550,7 +551,7 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
           }
         });
 
-        for (const trace of state.trace.filter((entry) => entry.agent === agentName)) {
+        for (const trace of state.trace.filter((entry: WorkflowTraceEntry) => entry.agent === agentName)) {
           await tx.traceLog.create({
             data: {
               workflowRunId,
@@ -706,7 +707,7 @@ function enqueueNextAgent(workflowRunId: string, state: TicketWorkflowState, lab
     workflowRunId,
     label,
     actionType: "NEXT_AGENT",
-    actionPayload: { workflowRunId, state }
+    actionPayload: { workflowRunId, state } as Prisma.InputJsonValue
   });
 }
 
@@ -720,7 +721,7 @@ function enqueueRerunAgent(
     workflowRunId,
     label,
     actionType: "RERUN_AGENT",
-    actionPayload: { workflowRunId, state, input }
+    actionPayload: { workflowRunId, state, input } as Prisma.InputJsonValue
   });
 }
 
@@ -914,6 +915,224 @@ export const workflowService = {
       editCount,
       mentorDecisions: Object.fromEntries(reviews.map((row) => [row.decision, row._count._all])),
       queue: await workflowJobQueue.stats()
+    };
+  },
+
+  async quality() {
+    const agentLabels: Record<string, string> = {
+      TICKET_ANALYZER: "Ticket Analyzer",
+      PRIORITY_CLASSIFIER: "Priority Classifier",
+      REPO_SEARCH: "Repo Search",
+      CODE_CONTEXT: "Code Context",
+      FIX_PROPOSAL: "Fix Proposal",
+      MENTOR_DRAFT: "Mentor Draft"
+    };
+
+    const [agentRuns, reviews, workflowStates] = await Promise.all([
+      prisma.agentRun.findMany({
+        include: {
+          agent: true,
+          traceLogs: true,
+          workflowRun: {
+            include: {
+              mentorReview: true
+            }
+          }
+        },
+        orderBy: { finishedAt: "desc" },
+        take: 2000
+      }),
+      prisma.mentorReview.groupBy({
+        by: ["decision"],
+        _count: { _all: true }
+      }),
+      prisma.workflowState.findMany({
+        select: {
+          workflowRunId: true,
+          inputTicket: true
+        }
+      })
+    ]);
+
+    const totalReviewed = reviews.reduce((sum, r) => sum + r._count._all, 0);
+    const approvedCount = reviews.find((r) => r.decision === "APPROVED")?._count._all ?? 0;
+    const rejectedCount = reviews.find((r) => r.decision === "REJECTED")?._count._all ?? 0;
+    const needsInfoCount = reviews.find((r) => r.decision === "NEED_MORE_INFORMATION")?._count._all ?? 0;
+
+    const editCountsByAgent: Record<string, number> = {};
+    const rerunCountsByAgent: Record<string, number> = {};
+    const workflowEditsByAgent: Record<string, Set<string>> = {};
+    const workflowRerunsByAgent: Record<string, Set<string>> = {};
+
+    for (const state of workflowStates) {
+      const meta = getWorkflowMeta(state.inputTicket);
+      const edits = Array.isArray(meta.edits) ? meta.edits as { agentType?: string }[] : [];
+      const reruns = Array.isArray(meta.reruns) ? meta.reruns as { agentType?: string }[] : [];
+
+      for (const edit of edits) {
+        const type = edit.agentType ?? "unknown";
+        editCountsByAgent[type] = (editCountsByAgent[type] ?? 0) + 1;
+        workflowEditsByAgent[type] ??= new Set();
+        workflowEditsByAgent[type].add(state.workflowRunId);
+      }
+
+      for (const rerun of reruns) {
+        const type = rerun.agentType ?? "unknown";
+        rerunCountsByAgent[type] = (rerunCountsByAgent[type] ?? 0) + 1;
+        workflowRerunsByAgent[type] ??= new Set();
+        workflowRerunsByAgent[type].add(state.workflowRunId);
+      }
+    }
+
+    const agents: Record<string, {
+      label: string;
+      totalRuns: number;
+      llmRuns: number;
+      fallbackRuns: number;
+      averageLatencyMs: number;
+      reviewedWorkflows: number;
+      approvedWorkflows: number;
+      rejectedWorkflows: number;
+      needsInfoWorkflows: number;
+      totalEdits: number;
+      totalReruns: number;
+      workflowsWithEdits: number;
+      workflowsWithReruns: number;
+    }> = {};
+
+    const reviewedSet = new Set<string>();
+
+    for (const run of agentRuns) {
+      const type = run.agent.type;
+      if (!agents[type]) {
+        agents[type] = {
+          label: agentLabels[type] ?? type,
+          totalRuns: 0,
+          llmRuns: 0,
+          fallbackRuns: 0,
+          averageLatencyMs: 0,
+          reviewedWorkflows: 0,
+          approvedWorkflows: 0,
+          rejectedWorkflows: 0,
+          needsInfoWorkflows: 0,
+          totalEdits: 0,
+          totalReruns: 0,
+          workflowsWithEdits: 0,
+          workflowsWithReruns: 0
+        };
+      }
+
+      agents[type].totalRuns++;
+
+      const outputTrace = run.traceLogs.find((t) => {
+        const meta = t.metadata as { status?: string } | null;
+        return meta?.status === "completed";
+      });
+      const outputSummary =
+        (outputTrace?.metadata as { outputSummary?: string } | null)?.outputSummary ?? "";
+
+      if (outputSummary.startsWith("LLM fallback used:")) {
+        agents[type].fallbackRuns++;
+      } else if (outputSummary.startsWith("LLM ")) {
+        agents[type].llmRuns++;
+      } else {
+        agents[type].fallbackRuns++;
+      }
+
+      if (run.finishedAt) {
+        const latency = run.finishedAt.getTime() - run.startedAt.getTime();
+        agents[type].averageLatencyMs =
+          (agents[type].averageLatencyMs * (agents[type].totalRuns - 1) + latency) / agents[type].totalRuns;
+      }
+
+      const review = run.workflowRun.mentorReview;
+      if (review && !reviewedSet.has(run.workflowRunId)) {
+        reviewedSet.add(run.workflowRunId);
+        agents[type].reviewedWorkflows++;
+
+        if (review.decision === "APPROVED") agents[type].approvedWorkflows++;
+        else if (review.decision === "REJECTED") agents[type].rejectedWorkflows++;
+        else agents[type].needsInfoWorkflows++;
+      }
+    }
+
+    for (const type of Object.keys(agents)) {
+      agents[type].averageLatencyMs = Math.round(agents[type].averageLatencyMs);
+      agents[type].totalEdits = editCountsByAgent[type] ?? 0;
+      agents[type].totalReruns = rerunCountsByAgent[type] ?? 0;
+      agents[type].workflowsWithEdits = workflowEditsByAgent[type]?.size ?? 0;
+      agents[type].workflowsWithReruns = workflowRerunsByAgent[type]?.size ?? 0;
+    }
+
+    return {
+      totalReviewed,
+      approvalRate: totalReviewed > 0 ? Number((approvedCount / totalReviewed).toFixed(3)) : 0,
+      reworkRate: totalReviewed > 0 ? Number((needsInfoCount / totalReviewed).toFixed(3)) : 0,
+      rejectionRate: totalReviewed > 0 ? Number((rejectedCount / totalReviewed).toFixed(3)) : 0,
+      agents,
+      agentLabels
+    };
+  },
+
+  async agentQualityDetail(agentType: string, page: number = 1, limit: number = 20) {
+    limit = Math.min(Math.max(limit, 1), 100);
+    page = Math.max(page, 1);
+
+    const [agentRuns, total] = await Promise.all([
+      prisma.agentRun.findMany({
+        where: { agent: { type: agentType as AgentType } },
+        include: {
+          traceLogs: true,
+          workflowRun: {
+            include: {
+              ticket: true,
+              mentorReview: true,
+              state: { select: { inputTicket: true } }
+            }
+          }
+        },
+        orderBy: { finishedAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.agentRun.count({ where: { agent: { type: agentType as AgentType } } })
+    ]);
+
+    const items = agentRuns.map((run) => {
+      const outputTrace = run.traceLogs.find((t) => {
+        const meta = t.metadata as { status?: string } | null;
+        return meta?.status === "completed";
+      });
+      const outputSummary =
+        (outputTrace?.metadata as { outputSummary?: string } | null)?.outputSummary ?? "";
+      const usedLlm = outputSummary.startsWith("LLM ") && !outputSummary.startsWith("LLM fallback used:");
+
+      const meta = getWorkflowMeta(run.workflowRun.state?.inputTicket);
+      const edits = (Array.isArray(meta.edits) ? meta.edits as { agentType?: string }[] : [])
+        .filter((e) => e.agentType === agentType).length;
+      const reruns = (Array.isArray(meta.reruns) ? meta.reruns as { agentType?: string }[] : [])
+        .filter((r) => r.agentType === agentType).length;
+
+      return {
+        workflowRunId: run.workflowRunId,
+        ticketTitle: run.workflowRun.ticket.title,
+        workflowStatus: run.workflowRun.status.toLowerCase(),
+        agentRunId: run.id,
+        usedLlm,
+        latencyMs: run.finishedAt ? run.finishedAt.getTime() - run.startedAt.getTime() : null,
+        mentorDecision: run.workflowRun.mentorReview?.decision ?? null,
+        editCount: edits,
+        rerunCount: reruns,
+        createdAt: run.startedAt.toISOString()
+      };
+    });
+
+    return {
+      items,
+      page,
+      limit,
+      total,
+      totalPages: Math.max(Math.ceil(total / limit), 1)
     };
   },
 
@@ -1299,7 +1518,7 @@ workflowJobQueue.registerWorker("RERUN_AGENT", async (payload: any) => {
           agentType: rerunAgent?.type,
           invalidatedAgentTypes: rerunAgent ? [rerunAgent.type] : [],
           invalidatedTrace: rerunAgent
-            ? state.trace.filter((entry) => entry.agent === rerunAgent.name)
+            ? state.trace.filter((entry: WorkflowTraceEntry) => entry.agent === rerunAgent.name)
             : [],
           createdAt: nowIso()
         }

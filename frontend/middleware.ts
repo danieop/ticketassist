@@ -13,7 +13,8 @@ const protectedPathRoles: { prefix: string; roles: UserRole[] }[] = [
   { prefix: "/tickets", roles: ["DEVELOPER", "ADMIN"] },
   { prefix: "/codebase", roles: ["DEVELOPER", "ADMIN"] },
   { prefix: "/mentor", roles: ["MENTOR", "ADMIN"] },
-  { prefix: "/admin", roles: ["ADMIN"] }
+  { prefix: "/admin", roles: ["ADMIN"] },
+  { prefix: "/quality", roles: ["MENTOR", "ADMIN"] }
 ];
 
 function getSession(request: NextRequest) {
@@ -63,6 +64,7 @@ export const config = {
     "/mentor/:path*",
     "/admin/:path*",
     "/tickets/:path*",
-    "/codebase/:path*"
+    "/codebase/:path*",
+    "/quality/:path*"
   ]
 };
