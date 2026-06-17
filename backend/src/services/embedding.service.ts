@@ -79,7 +79,8 @@ class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
       body: JSON.stringify({
         model: this.model,
         input: texts
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!response.ok) {

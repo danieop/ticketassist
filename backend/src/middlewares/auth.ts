@@ -18,7 +18,7 @@ declare module "express-serve-static-core" {
 export const requireAuth: RequestHandler = (request, _response, next) => {
   try {
     const header = request.headers.authorization;
-    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+    const token = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : (typeof request.query.token === "string" ? request.query.token : undefined);
 
     if (!token) {
       throw new AppError(401, "Missing authorization token");

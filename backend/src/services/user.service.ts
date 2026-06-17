@@ -6,6 +6,7 @@ import type { Prisma, User } from "@prisma/client";
 import { env } from "../config/env.js";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
+import { notificationService } from "./notification.service.js";
 import type {
   CreateUserInput,
   GoogleAuthInput,
@@ -268,6 +269,19 @@ export const userService = {
         select: registrationRequestSelect
       })
     ]);
+
+    // Notify the newly created user
+    try {
+      await notificationService.create({
+        userId: user.id,
+        type: 'REGISTRATION_APPROVED',
+        title: 'Registration approved',
+        message: 'Your account has been approved. Welcome to TicketAssist!',
+        metadata: { email: request.email, role: request.role }
+      });
+    } catch (err) {
+      console.error('Failed to send registration notification:', err);
+    }
 
     return {
       user: toPublicUser(user),

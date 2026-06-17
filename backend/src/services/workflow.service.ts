@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 import { AppError } from "../middlewares/error-handler.js";
 import { repositoryService } from "./repository.service.js";
 import { workflowJobQueue } from "./workflow-job-queue.service.js";
+import { notificationService } from "./notification.service.js";
 import {
   getAgentForCompletedStatus,
   getNextWorkflowAgent,
@@ -578,6 +579,40 @@ async function persistWorkflowOutcome(workflowRunId: string, state: TicketWorkfl
       timeout: 100000
     }
   );
+
+  // Emit notifications for terminal states
+  try {
+    const workflowRun = await prisma.workflowRun.findUnique({
+      where: { id: workflowRunId },
+      include: { ticket: true }
+    });
+    if (workflowRun) {
+      const ticketTitle = workflowRun.ticket?.title ?? 'Untitled';
+      if (state.status === 'mentor_draft_ready') {
+        if (workflowRun.ticket?.reporterId) {
+          await notificationService.create({
+            userId: workflowRun.ticket.reporterId,
+            type: 'WORKFLOW_COMPLETED',
+            title: 'Workflow ready',
+            message: `All agents completed for "${ticketTitle}"`,
+            metadata: { workflowRunId, ticketId: workflowRun.ticketId, ticketTitle }
+          });
+        }
+      } else if (state.status === 'failed') {
+        if (workflowRun.ticket?.reporterId) {
+          await notificationService.create({
+            userId: workflowRun.ticket.reporterId,
+            type: 'WORKFLOW_FAILED',
+            title: 'Workflow failed',
+            message: `Agent pipeline failed for "${ticketTitle}"`,
+            metadata: { workflowRunId, ticketId: workflowRun.ticketId, ticketTitle }
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to send workflow notification:', err);
+  }
 }
 
 function mapWorkflow(workflow: Awaited<ReturnType<typeof findWorkflowOrThrow>>) {
@@ -1399,6 +1434,20 @@ export const workflowService = {
       })
     ]);
 
+    // Notify all mentors
+    try {
+      const ticket = await prisma.ticket.findUnique({ where: { id: workflow.ticketId } });
+      const ticketTitle = ticket?.title ?? 'Untitled';
+      await notificationService.createForRole('MENTOR', {
+        type: 'WORKFLOW_SUBMITTED',
+        title: 'New review',
+        message: `"${ticketTitle}" submitted for review`,
+        metadata: { workflowRunId: id, ticketId: workflow.ticketId, ticketTitle }
+      });
+    } catch (err) {
+      console.error('Failed to send submit notification:', err);
+    }
+
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
@@ -1487,6 +1536,36 @@ export const workflowService = {
         }
       })
     ]);
+
+    // Notify the developer who owns the workflow
+    try {
+      const fullWorkflow = await prisma.workflowRun.findUnique({
+        where: { id: workflow.id },
+        include: { ticket: true }
+      });
+      const ticketTitle = fullWorkflow?.ticket?.title ?? 'Untitled';
+      const developerId = fullWorkflow?.ticket?.reporterId;
+      if (developerId) {
+        const notifType = input.decision === 'APPROVED' ? 'REVIEW_APPROVED' as const
+          : input.decision === 'REJECTED' ? 'REVIEW_REJECTED' as const
+          : 'REVIEW_NEEDS_INFO' as const;
+        const notifTitle = input.decision === 'APPROVED' ? 'Review approved'
+          : input.decision === 'REJECTED' ? 'Review rejected'
+          : 'More info requested';
+        const notifMessage = input.decision === 'APPROVED' ? `"${ticketTitle}" has been approved`
+          : input.decision === 'REJECTED' ? `"${ticketTitle}" has been rejected`
+          : `More information requested for "${ticketTitle}"`;
+        await notificationService.create({
+          userId: developerId,
+          type: notifType,
+          title: notifTitle,
+          message: notifMessage,
+          metadata: { workflowRunId: workflow.id, ticketId: workflow.ticketId, ticketTitle, decision: input.decision, comment: input.comment }
+        });
+      }
+    } catch (err) {
+      console.error('Failed to send review notification:', err);
+    }
 
     return mapWorkflow(await findWorkflowOrThrow(id));
   }

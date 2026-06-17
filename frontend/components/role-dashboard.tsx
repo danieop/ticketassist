@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { NotificationBell } from './notification-bell';
 
 type RoleKey = "developer" | "mentor" | "admin" | "quality";
 
@@ -183,6 +184,7 @@ const handleSwitchAccount = async (e: React.MouseEvent) => {
           <p>{headerDescription}</p>
         </div>
         <div className="topbar-actions">
+          <NotificationBell />
           {isQualityPage && (
             <>
               <Link className="secondary-action" href="/mentor">
