@@ -14,28 +14,30 @@ import type {
   TicketAnalysis
 } from "./workflow-state.js";
 
-const allowedExtensions = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".py",
-  ".java",
-  ".jsp",
-  ".go",
-  ".rb",
-  ".php",
-  ".cs",
-  ".json",
-  ".md",
-  ".yml",
-  ".yaml",
-  ".css",
-  ".scss",
-  ".html",
-  ".sql",
-  ".xml",
-  ".properties"
+// Denylist: binary, media, compiled, and non-text files that should never be indexed.
+// Everything else (all programming languages, config formats, docs) is indexed by default.
+const excludedExtensions = new Set([
+  // Images
+  ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".tiff", ".tif", ".avif",
+  // Videos & Audio
+  ".mp4", ".avi", ".mov", ".mkv", ".mp3", ".wav", ".flac", ".ogg", ".webm",
+  // Fonts
+  ".woff", ".woff2", ".ttf", ".otf", ".eot",
+  // Compiled / Binary
+  ".exe", ".dll", ".so", ".dylib", ".o", ".obj", ".class", ".pyc", ".pyo",
+  ".wasm", ".bin", ".dat", ".lib", ".a",
+  // Archives
+  ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".jar", ".war", ".ear",
+  // Documents / Office
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+  // Databases
+  ".db", ".sqlite", ".sqlite3", ".mdb",
+  // Source maps & certs
+  ".map", ".pem", ".cer", ".crt", ".key", ".p12", ".pfx",
+  // IDE / OS artifacts
+  ".DS_Store",
+  // Misc binary
+  ".iso", ".dmg", ".img", ".deb", ".rpm", ".msi", ".cab",
 ]);
 
 const skippedPathParts = new Set([
@@ -223,7 +225,7 @@ function isSearchableFile(file: CodeRepositoryFile) {
   const sizeBytes = typeof file.sizeBytes === "bigint" ? Number(file.sizeBytes) : Number(file.sizeBytes);
 
   return (
-    allowedExtensions.has(extension) &&
+    !excludedExtensions.has(extension) &&
     !skippedFileNames.has(fileName) &&
     sizeBytes <= 500 * 1024 &&
     !parts.some((part) => skippedPathParts.has(part.toLowerCase())) &&
