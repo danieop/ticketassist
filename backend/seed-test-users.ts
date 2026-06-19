@@ -25,6 +25,17 @@ async function main() {
       role: 'MENTOR'
     }
   });
+
+  await prisma.user.upsert({
+    where: { email: 'admin@test.com' },
+    update: { passwordHash: hash },
+    create: {
+      name: 'Test Admin',
+      email: 'admin@test.com',
+      passwordHash: hash,
+      role: 'ADMIN'
+    }
+  });
   
   console.log('Test users seeded');
 }
