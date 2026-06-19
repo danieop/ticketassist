@@ -86,6 +86,7 @@ model User {
   mentorReviews MentorReview[]
   repositories  CodeRepository[]
   refreshTokens RefreshToken[]
+  notifications  Notification[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -292,6 +293,31 @@ model MentorReview {
   reviewedAt    DateTime       @default(now())
 
   @@index([mentorId])
+}
+
+enum NotificationType {
+  WORKFLOW_COMPLETED
+  WORKFLOW_FAILED
+  WORKFLOW_SUBMITTED
+  REVIEW_APPROVED
+  REVIEW_REJECTED
+  REVIEW_NEEDS_INFO
+  REGISTRATION_APPROVED
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  metadata  Json?
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }
 
 enum JobStatus {

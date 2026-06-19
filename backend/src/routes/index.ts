@@ -6,6 +6,7 @@ import { repositoryRouter } from "./repository.routes.js";
 import { ticketRouter } from "./ticket.routes.js";
 import { userRouter } from "./user.routes.js";
 import { workflowRouter } from "./workflow.routes.js";
+import { notificationRouter } from "./notification.routes.js";
 
 export const apiRouter = Router();
 
@@ -16,3 +17,4 @@ apiRouter.use("/api/repositories", repositoryRouter);
 apiRouter.use("/api/tickets", ticketRouter);
 apiRouter.use("/api/users", userRouter);
 apiRouter.use("/api/workflows", workflowRouter);
+apiRouter.use("/api/notifications", notificationRouter);

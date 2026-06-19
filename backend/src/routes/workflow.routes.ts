@@ -9,7 +9,9 @@ import {
   rerunWorkflowAgent,
   updateWorkflowOutput,
   submitWorkflowForReview,
-  reviewWorkflow
+  reviewWorkflow,
+  getQualityDashboard,
+  getAgentQualityDetail
 } from "../controllers/workflow.controller.js";
 import { requireAuth, requireRole } from "../middlewares/auth.js";
 
@@ -38,6 +40,8 @@ workflowRouter.post("/", requireRole("DEVELOPER", "ADMIN"), createWorkflow);
 workflowRouter.get("/", listWorkflows);
 workflowRouter.get("/dashboard", getWorkflowDashboard);
 workflowRouter.get("/summaries", listWorkflowSummaries);
+workflowRouter.get("/quality", requireRole("MENTOR", "ADMIN"), getQualityDashboard);
+workflowRouter.get("/quality/agent/:agentType/detail", requireRole("MENTOR", "ADMIN"), getAgentQualityDetail);
 
 /**
  * @openapi
