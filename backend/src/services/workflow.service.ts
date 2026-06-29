@@ -5,6 +5,7 @@ import { AppError } from "../middlewares/error-handler.js";
 import { repositoryService } from "./repository.service.js";
 import { workflowJobQueue } from "./workflow-job-queue.service.js";
 import { notificationService } from "./notification.service.js";
+import { ticketMemoryService } from "./ticket-memory.service.js";
 import {
   getAgentForCompletedStatus,
   getNextWorkflowAgent,
@@ -1448,6 +1449,8 @@ export const workflowService = {
       console.error('Failed to send submit notification:', err);
     }
 
+    ticketMemoryService.embedAndStoreWorkflow(id).catch(err => console.error("Failed to store ticket memory:", err));
+
     return mapWorkflow(await findWorkflowOrThrow(id));
   },
 
@@ -1566,6 +1569,8 @@ export const workflowService = {
     } catch (err) {
       console.error('Failed to send review notification:', err);
     }
+
+    ticketMemoryService.embedAndStoreWorkflow(id).catch(err => console.error("Failed to update ticket memory:", err));
 
     return mapWorkflow(await findWorkflowOrThrow(id));
   }

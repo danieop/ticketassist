@@ -1474,10 +1474,7 @@ function DeveloperWorkflowWorkspace({ workflowId }: { workflowId?: string }) {
                 <span>Graph edges</span>
                 <strong>{repoSearch?.dependencyGraph?.edges.length ?? 0}</strong>
               </div>
-              <div>
-                <span>Memory matches</span>
-                <strong>{repoSearch?.memoryMatches?.length ?? 0}</strong>
-              </div>
+
             </div>
             <ul className="file-list">
               {(codeContext?.relevantFiles ?? repoSearch?.results ?? []).slice(0, 6).map((result) => (
@@ -1488,7 +1485,52 @@ function DeveloperWorkflowWorkspace({ workflowId }: { workflowId?: string }) {
               ))}
             </ul>
             {codeContext?.graphContext ? <p className="muted-text">{codeContext.graphContext.summary}</p> : null}
-            {codeContext?.memoryContext ? <p className="muted-text">{codeContext.memoryContext.summary}</p> : null}
+          </article>
+
+          <article className="panel">
+            <div className="panel-heading">
+              <p className="eyebrow">Similar Tickets</p>
+              <h2>{repoSearch?.memoryMatches?.length ?? 0} found</h2>
+            </div>
+            
+            {repoSearch?.memoryMatches && repoSearch.memoryMatches.length > 0 ? (
+              <div className="similar-tickets-panel">
+                {repoSearch.memoryMatches.map((match: any) => {
+                  let scoreClass = 'score-low';
+                  if (match.score >= 0.75) scoreClass = 'score-high';
+                  else if (match.score >= 0.5) scoreClass = 'score-medium';
+                  
+                  let decisionIcon = '⏳ Pending';
+                  if (match.reviewedDecision === 'APPROVED') decisionIcon = '✅ APPROVED';
+                  else if (match.reviewedDecision === 'REJECTED') decisionIcon = '❌ REJECTED';
+                  else if (match.reviewedDecision === 'NEED_MORE_INFORMATION') decisionIcon = 'ℹ️ NEEDS INFO';
+
+                  return (
+                    <div key={match.workflowRunId} className="similar-ticket-card">
+                      <div className="similar-ticket-header">
+                        <span className={`similar-ticket-score ${scoreClass}`}>{Math.round(match.score * 100)}% match</span>
+                        <span className="similar-ticket-decision">{decisionIcon}</span>
+                      </div>
+                      <h3 className="similar-ticket-title">
+                        <Link href={`/workflow/${match.workflowRunId}`}>{match.title}</Link>
+                      </h3>
+                      <div className="similar-ticket-meta">
+                        {match.affectedFeature && `Feature: ${match.affectedFeature} · `}
+                        {match.priorityLevel && `Priority: ${match.priorityLevel}`}
+                      </div>
+                      {match.fixApproach && (
+                        <p className="similar-ticket-approach">Fix: {match.fixApproach}</p>
+                      )}
+                      {match.resolvedFiles && match.resolvedFiles.length > 0 && (
+                        <p className="similar-ticket-files">Files: {match.resolvedFiles.join(', ')}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted-text">No similar tickets found in the knowledge base.</p>
+            )}
           </article>
 
           <article className="panel">

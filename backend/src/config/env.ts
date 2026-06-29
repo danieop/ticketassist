@@ -41,7 +41,10 @@ const envSchema = z.object({
   AI_MODEL_MENTOR_DRAFT: z.string().trim().default("gpt-5.3-codex"),
   EMBEDDING_MODEL: z.string().trim().default("text-embedding-3-small"),
   REPO_INDEX_NAME: z.string().trim().default("default-repo-index"),
-  PGVECTOR_CODE_CHUNKS_TABLE: z.string().trim().default("code_chunks")
+  PGVECTOR_CODE_CHUNKS_TABLE: z.string().trim().default("code_chunks"),
+  PGVECTOR_TICKET_MEMORY_TABLE: z.string().trim().default("ticket_memory"),
+  TICKET_MEMORY_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.3),
+  TICKET_MEMORY_MAX_RESULTS: z.coerce.number().int().positive().default(5)
 }).superRefine((value, context) => {
   if (value.STORAGE_DRIVER !== "sftp") {
     return;

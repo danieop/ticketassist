@@ -11,7 +11,8 @@ import {
   submitWorkflowForReview,
   reviewWorkflow,
   getQualityDashboard,
-  getAgentQualityDetail
+  getAgentQualityDetail,
+  getSimilarTickets
 } from "../controllers/workflow.controller.js";
 import { requireAuth, requireRole } from "../middlewares/auth.js";
 
@@ -67,6 +68,7 @@ workflowRouter.post("/:id/accept", requireRole("DEVELOPER", "ADMIN"), acceptWork
 workflowRouter.post("/:id/rerun", requireRole("DEVELOPER", "ADMIN"), rerunWorkflowAgent);
 workflowRouter.patch("/:id/output", requireRole("DEVELOPER", "ADMIN"), updateWorkflowOutput);
 workflowRouter.post("/:id/submit", requireRole("DEVELOPER", "ADMIN"), submitWorkflowForReview);
+workflowRouter.get("/:id/similar-tickets", requireRole("DEVELOPER", "ADMIN", "MENTOR"), getSimilarTickets);
 
 /**
  * @openapi

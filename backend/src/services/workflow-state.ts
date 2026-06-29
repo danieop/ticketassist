@@ -82,11 +82,16 @@ export const ticketMemoryMatchSchema = z.object({
   ticketId: z.string(),
   title: z.string(),
   score: z.number(),
+  matchType: z.enum(["vector", "keyword", "hybrid"]).default("keyword"),
   status: z.string(),
   matchedSignals: z.array(z.string()),
   summary: z.string().optional(),
   fixTitle: z.string().optional(),
-  reviewedDecision: z.string().optional()
+  fixApproach: z.string().optional(),
+  resolvedFiles: z.array(z.string()).optional(),
+  reviewedDecision: z.string().optional(),
+  priorityLevel: z.string().optional(),
+  affectedFeature: z.string().optional()
 });
 
 export const repoSearchSchema = z.object({

@@ -4,6 +4,7 @@ import type { CodeRepository, CodeRepositoryFile } from "@prisma/client";
 import { env } from "../config/env.js";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../middlewares/error-handler.js";
+import { ticketMemoryService } from "./ticket-memory.service.js";
 import { createEmbeddingClient, toPgVectorLiteral } from "./embedding.service.js";
 import { redactText } from "./redaction.service.js";
 import { repositoryService } from "./repository.service.js";
@@ -1354,60 +1355,99 @@ function buildDependencyGraph(results: RepoSearchResult[]) {
 }
 
 async function findTicketMemoryMatches(input: RepoSearchInput) {
-  const queryTerms = input.queryTerms.map((term) => term.toLowerCase());
-
-  if (queryTerms.length === 0) {
-    return [];
+  // 1. Vector Search
+  let vectorMatches: any[] = [];
+  try {
+    vectorMatches = await ticketMemoryService.findSimilarTickets(
+      input.semanticQuery,
+      input.repositoryId,
+      5
+    );
+  } catch (error) {
+    console.error("Vector memory search failed:", error);
   }
 
-  const workflows = await prisma.workflowRun.findMany({
-    where: {
-      repositoryId: input.repositoryId,
-      status: {
-        in: ["MENTOR_DRAFT_READY", "WAITING_FOR_REVIEW", "REVIEWED"]
+  // 2. Keyword fallback (if vector search didn't find enough)
+  const queryTerms = input.queryTerms.map((term) => term.toLowerCase());
+  let keywordMatches: any[] = [];
+
+  if (queryTerms.length > 0) {
+    const workflows = await prisma.workflowRun.findMany({
+      where: {
+        repositoryId: input.repositoryId,
+        status: {
+          in: ["MENTOR_DRAFT_READY", "WAITING_FOR_REVIEW", "REVIEWED"]
+        }
+      },
+      include: {
+        ticket: true,
+        state: true,
+        mentorReview: true
+      },
+      orderBy: {
+        startedAt: "desc"
+      },
+      take: 20
+    });
+
+    keywordMatches = workflows
+      .map((workflow) => {
+        const state = workflow.state;
+        const text = [
+          workflow.ticket.title,
+          workflow.ticket.description,
+          JSON.stringify(state?.ticketAnalysis ?? {}),
+          JSON.stringify(state?.codeContext ?? {}),
+          JSON.stringify(state?.fixProposal ?? {})
+        ]
+          .join(" ")
+          .toLowerCase();
+        const matchedSignals = queryTerms.filter((term) => text.includes(term)).slice(0, 12);
+        const score = matchedSignals.length / Math.max(6, queryTerms.length);
+        const fixProposal = state?.fixProposal as any;
+        const ticketAnalysis = state?.ticketAnalysis as any;
+        const priority = state?.priorityClassification as any;
+
+        return {
+          workflowRunId: workflow.id,
+          ticketId: workflow.ticketId,
+          title: workflow.ticket.title,
+          score: Number(score.toFixed(4)),
+          matchType: "keyword" as const,
+          status: workflow.status,
+          matchedSignals,
+          summary: ticketAnalysis?.summary,
+          affectedFeature: ticketAnalysis?.affectedFeature,
+          priorityLevel: priority?.level,
+          fixTitle: fixProposal?.title,
+          fixApproach: fixProposal?.recommendedApproach,
+          resolvedFiles: fixProposal?.patchProposal?.targetFiles ?? [],
+          reviewedDecision: workflow.mentorReview?.decision
+        };
+      })
+      .filter((match) => match.score > 0);
+  }
+
+  // 3. Merge and deduplicate
+  const merged = [...vectorMatches];
+  const seenIds = new Set(vectorMatches.map((m) => m.workflowRunId));
+
+  for (const match of keywordMatches) {
+    if (!seenIds.has(match.workflowRunId)) {
+      merged.push(match);
+      seenIds.add(match.workflowRunId);
+    } else {
+      // If found in both, boost score and set to hybrid
+      const existing = merged.find(m => m.workflowRunId === match.workflowRunId);
+      if (existing) {
+        existing.score = Math.min(1.0, existing.score + (match.score * 0.2));
+        existing.matchType = "hybrid";
+        existing.matchedSignals = match.matchedSignals;
       }
-    },
-    include: {
-      ticket: true,
-      state: true,
-      mentorReview: true
-    },
-    orderBy: {
-      startedAt: "desc"
-    },
-    take: 40
-  });
+    }
+  }
 
-  return workflows
-    .map((workflow) => {
-      const state = workflow.state;
-      const text = [
-        workflow.ticket.title,
-        workflow.ticket.description,
-        JSON.stringify(state?.ticketAnalysis ?? {}),
-        JSON.stringify(state?.codeContext ?? {}),
-        JSON.stringify(state?.fixProposal ?? {})
-      ]
-        .join(" ")
-        .toLowerCase();
-      const matchedSignals = queryTerms.filter((term) => text.includes(term)).slice(0, 12);
-      const score = matchedSignals.length / Math.max(6, queryTerms.length);
-      const fixProposal = state?.fixProposal as { title?: string } | null;
-      const ticketAnalysis = state?.ticketAnalysis as { summary?: string } | null;
-
-      return {
-        workflowRunId: workflow.id,
-        ticketId: workflow.ticketId,
-        title: workflow.ticket.title,
-        score: Number(score.toFixed(4)),
-        status: workflow.status,
-        matchedSignals,
-        summary: ticketAnalysis?.summary,
-        fixTitle: fixProposal?.title,
-        reviewedDecision: workflow.mentorReview?.decision
-      };
-    })
-    .filter((match) => match.score > 0)
+  return merged
     .sort((left, right) => right.score - left.score)
     .slice(0, 5);
 }
