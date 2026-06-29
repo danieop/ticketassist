@@ -1,6 +1,28 @@
 import { workflowService } from "../services/workflow.service.js";
+import { prisma } from "../config/prisma.js";
+
+async function ensureDemoActor() {
+  return prisma.user.upsert({
+    where: { email: "demo@ticketassist.local" },
+    update: {
+      name: "Demo Developer",
+      role: "DEVELOPER"
+    },
+    create: {
+      name: "Demo Developer",
+      email: "demo@ticketassist.local",
+      role: "DEVELOPER"
+    },
+    select: {
+      id: true,
+      role: true
+    }
+  });
+}
 
 async function main() {
+  const actor = await ensureDemoActor();
+
   let workflow = await workflowService.create({
     retrievalStrategy: "hybrid",
     forceReindex: false,
@@ -13,7 +35,7 @@ async function main() {
       reporterName: "Demo Reporter",
       source: "MANUAL"
     }
-  });
+  }, actor);
 
   while (workflow.nextAgent) {
     workflow = await workflowService.acceptAgent(workflow.id, { runAsync: false });

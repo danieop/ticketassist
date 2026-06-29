@@ -31,8 +31,6 @@ const repositoryInclude = {
   uploadedBy: true
 } as const;
 
-const repositoryRefreshTransactionTimeoutMs = 30_000;
-
 function stripQuotes(value: string) {
   return value.trim().replace(/^["']|["']$/g, "");
 }
@@ -357,39 +355,33 @@ export const repositoryService = {
         }
       }));
 
-    await prisma.$transaction(
-      [
-        prisma.codeRepositoryFile.deleteMany({
-          where: { repositoryId: repository.id }
-        }),
-        ...(localCodebase.files.length > 0
-          ? [
-              prisma.codeRepositoryFile.createMany({
-                data: localCodebase.files.map((file) => ({
-                  repositoryId: repository.id,
-                  ...file
-                }))
-              })
-            ]
-          : []),
-        prisma.codeRepository.update({
-          where: { id: repository.id },
-          data: {
-            name: repositoryName,
-            description: "Local default codebase for ticket routing.",
-            rootPath: localCodebase.rootPath,
-            status: "READY",
-            fileCount: localCodebase.files.length,
-            totalBytes,
-            errorMessage: null
-          }
-        })
-      ],
-      {
-        maxWait: repositoryRefreshTransactionTimeoutMs,
-        timeout: repositoryRefreshTransactionTimeoutMs
-      }
-    );
+    await prisma.$transaction([
+      prisma.codeRepositoryFile.deleteMany({
+        where: { repositoryId: repository.id }
+      }),
+      ...(localCodebase.files.length > 0
+        ? [
+            prisma.codeRepositoryFile.createMany({
+              data: localCodebase.files.map((file) => ({
+                repositoryId: repository.id,
+                ...file
+              }))
+            })
+          ]
+        : []),
+      prisma.codeRepository.update({
+        where: { id: repository.id },
+        data: {
+          name: repositoryName,
+          description: "Local default codebase for ticket routing.",
+          rootPath: localCodebase.rootPath,
+          status: "READY",
+          fileCount: localCodebase.files.length,
+          totalBytes,
+          errorMessage: null
+        }
+      })
+    ]);
 
     return toRepositoryResponse(await findRepositoryOrThrow(repository.id));
   },
@@ -422,29 +414,23 @@ export const repositoryService = {
       const fileMetadata = await writeUploadedFiles(repositoryRoot, files);
       const totalBytes = fileMetadata.reduce((sum, file) => sum + file.sizeBytes, 0n);
 
-      await prisma.$transaction(
-        [
-          prisma.codeRepositoryFile.createMany({
-            data: fileMetadata.map((file) => ({
-              repositoryId: repository.id,
-              ...file
-            }))
-          }),
-          prisma.codeRepository.update({
-            where: { id: repository.id },
-            data: {
-              rootPath: repositoryRoot,
-              status: "READY",
-              fileCount: fileMetadata.length,
-              totalBytes
-            }
-          })
-        ],
-        {
-          maxWait: repositoryRefreshTransactionTimeoutMs,
-          timeout: repositoryRefreshTransactionTimeoutMs
-        }
-      );
+      await prisma.$transaction([
+        prisma.codeRepositoryFile.createMany({
+          data: fileMetadata.map((file) => ({
+            repositoryId: repository.id,
+            ...file
+          }))
+        }),
+        prisma.codeRepository.update({
+          where: { id: repository.id },
+          data: {
+            rootPath: repositoryRoot,
+            status: "READY",
+            fileCount: fileMetadata.length,
+            totalBytes
+          }
+        })
+      ]);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Repository upload failed";
 

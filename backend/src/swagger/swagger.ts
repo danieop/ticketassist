@@ -169,8 +169,7 @@ export const swaggerSpec = swaggerJSDoc({
             comment: {
               type: "string",
               example: "Please confirm affected release version before implementation."
-            },
-            mentorId: { type: "string" }
+            }
           }
         },
         UploadRepositoryRequest: {

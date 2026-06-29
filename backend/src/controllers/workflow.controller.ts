@@ -21,8 +21,12 @@ function getParamId(value: string | string[] | undefined) {
 
 export const createWorkflow: RequestHandler = async (request, response, next) => {
   try {
+    if (!request.user) {
+      throw new AppError(401, "Missing authorization token");
+    }
+
     const payload = createWorkflowSchema.parse(request.body);
-    const workflow = await workflowService.create(payload);
+    const workflow = await workflowService.create(payload, request.user);
     response.status(201).json(workflow);
   } catch (error) {
     next(error);
@@ -121,8 +125,12 @@ export const submitWorkflowForReview: RequestHandler = async (request, response,
 
 export const reviewWorkflow: RequestHandler = async (request, response, next) => {
   try {
+    if (!request.user) {
+      throw new AppError(401, "Missing authorization token");
+    }
+
     const payload = reviewWorkflowSchema.parse(request.body);
-    const workflow = await workflowService.review(getParamId(request.params.id), payload);
+    const workflow = await workflowService.review(getParamId(request.params.id), payload, request.user.id);
     response.json(workflow);
   } catch (error) {
     next(error);
