@@ -44,6 +44,25 @@ function safeJsonParse(value: unknown): any {
   return value;
 }
 
+async function ensureEvalActor() {
+  return prisma.user.upsert({
+    where: { email: "eval@ticketassist.local" },
+    update: {
+      name: "Evaluation Runner",
+      role: "DEVELOPER"
+    },
+    create: {
+      name: "Evaluation Runner",
+      email: "eval@ticketassist.local",
+      role: "DEVELOPER"
+    },
+    select: {
+      id: true,
+      role: true
+    }
+  });
+}
+
 /**
  * Extract unique file paths returned by both repo search and code context.
  */
@@ -111,6 +130,8 @@ export async function runSingleCase(
   const timestamp = new Date().toISOString();
 
   try {
+    const actor = await ensureEvalActor();
+
     // 1. Create workflow
     let workflow = await workflowService.create({
       retrievalStrategy: config.retrievalStrategy,
@@ -120,7 +141,7 @@ export async function runSingleCase(
       indexName: config.indexName,
       repositoryId: config.repositoryId,
       ticket: evalCase.ticket,
-    });
+    }, actor);
 
     // 2. Run all agents sequentially
     while (workflow.nextAgent) {
